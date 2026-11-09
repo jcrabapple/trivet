@@ -1,5 +1,8 @@
 # Trivet
 
+[![ci](https://github.com/jcrabapple/trivet/actions/workflows/ci.yml/badge.svg)](https://github.com/jcrabapple/trivet/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A search engine for humans, backed by agentic search APIs.
 
 ![Trivet search results](docs/screenshot-results.png)
@@ -47,7 +50,7 @@ Then a second stage re-ranks locally with signals no vendor exposes:
 Python 3.10+.
 
 ```bash
-git clone <this repo> trivet && cd trivet
+git clone https://github.com/jcrabapple/trivet && cd trivet
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 
@@ -70,7 +73,7 @@ that no engines are available.
 
 Every backend needs its own key. Two ways in; the web UI is the intended one.
 
-**In the browser** — `/settings/keys`. Paste a key, press Save. It is encrypted with
+**In the browser** — `/settings/keys` on your own instance. Paste a key, press Save. It is encrypted with
 AES-256-GCM under a key derived from `TRIVET_SECRET_KEY`, stored in the local SQLite
 database, and afterwards shown only as `···abcd`. The engine appears in Preferences the
 moment its key is saved, no restart.
