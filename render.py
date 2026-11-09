@@ -5,8 +5,10 @@ URL you can bookmark or share, and there is no build step.
 """
 from __future__ import annotations
 
+import json
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from urllib.parse import urlencode, urlsplit
 
@@ -431,6 +433,9 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
 <div class="wrap">
   <div class="meta"><span class="count">{count_line}</span>{pager_html}</div>
   {_timings_line(results, cached_age, {s.name: s.label for s in all_engines})}
+  {_report_line(q, hits, page=page, per=per, results=results, engines_on=engines_on,
+                time_range=time_range, ss=ss, cached_age=cached_age,
+                labels={s.name: s.label for s in all_engines})}
   {fail_box}
   {_filters(q, engines_on, all_engines, time_range, ss, per)}
   {body_hits}
@@ -508,6 +513,71 @@ def login(next_path: str = "/", error: str = "") -> str:
     return layout("Sign in · trivet", body, "").replace("</style>", extra + "</style>")
 
 
+# --- "report a problem" ------------------------------------------------------
+# A fork should point at its own tracker rather than upstream.
+REPO = os.environ.get("TRIVET_REPO", "jcrabapple/trivet")
+ISSUE_URL_LIMIT = 7000        # GitHub gets unhappy well before a URL gets long
+
+
+def _report_json(hits: list, limit: int) -> str:
+    rows = []
+    for i, h in enumerate(hits[:limit], start=1):
+        rows.append({
+            "pos": i,
+            "title": (h.title or "")[:120],
+            "url": (h.url or "")[:220],
+            "engines": list(h.engines or []),
+            "score": round(float(getattr(h, "score", 0.0) or 0.0), 3),
+        })
+    return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+
+
+def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
+               engines_on: set[str], time_range: str, ss: str,
+               cached_age: float | None = None, repo: str | None = None,
+               labels: dict[str, str] | None = None) -> str:
+    """Prefilled GitHub issue: the query plus a JSON dump of what was shown.
+
+    A URL has a practical length limit, so the dump shrinks (10 → 6 → 3 → 1 results)
+    until it fits, and says so when it was cut. The query always survives.
+    """
+    repo = repo or REPO
+    base = f"https://github.com/{repo}/issues/new"
+    title = f"Search results problem: {q[:110]}"
+    label = labels or {}
+    engines = ", ".join(sorted(label.get(e, e) for e in engines_on)) or "none"
+    timings = " · ".join(
+        f"{label.get(r.name, r.name)}{'' if r.ok else ' (failed)'} {r.ms}ms"
+        for r in results) or "n/a"
+    view = (f"page {page}, {per} per page, {time_range}, safesearch {ss}"
+            + (f", served from cache ({int(cached_age)}s old)" if cached_age else ""))
+    header = (
+        f"**Query:** `{q}`\n\n"
+        f"**When:** {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+        f"**Trivet:** {VERSION}\n"
+        f"**Engines:** {engines}\n"
+        f"**Timings:** {timings}\n"
+        f"**View:** {view}\n\n"
+        "### What went wrong?\n\n"
+        "<!-- e.g. \"the answer is the 4th result\", \"these are all SEO spam\", "
+        "\"this is the wrong version\" -->\n")
+    for limit in (10, 6, 3, 1):
+        cut = f"\n_(cut to {limit} of {len(hits)} results to fit in a URL)_" if len(hits) > limit else ""
+        body = f"{header}\n### Results\n\n```json\n{_report_json(hits, limit)}\n```\n{cut}\n"
+        url = f"{base}?{urlencode({'title': title, 'body': body})}"
+        if len(url) <= ISSUE_URL_LIMIT:
+            return url
+    # even one result did not fit: keep the context, drop the dump
+    body = header + "\n### Results\n\n_(too long to fit in a link - paste them here)_\n"
+    return f"{base}?{urlencode({'title': title, 'body': body})}"
+
+
+def _report_line(q: str, hits: list, **kw) -> str:
+    url = _issue_url(q, hits, **kw)
+    return (f'<p class="report"><a href="{escape(url)}" target="_blank" rel="noopener">'
+            f'Problem with the results? Report it on GitHub!</a></p>')
+
+
 def _timings_line(results: list, cached_age: float | None,
                   labels: dict[str, str] | None = None) -> str:
     """One query's per-engine latency, which is the number people actually ask about."""
@@ -579,6 +649,9 @@ def stats_page(rows: list[dict], hours: int, labels: dict[str, str] | None = Non
 .timings b{color:var(--fg);font-weight:600}
 .timings .fail{color:var(--danger)}
 .timings .skip{color:var(--muted);opacity:.85}
+.report{margin:0 0 12px;font-size:11.5px}
+.report a{color:var(--muted)}
+.report a:hover{color:var(--fg)}
 """
     return layout(f"Engine speed · trivet", body, "").replace("</style>", extra + "</style>")
 

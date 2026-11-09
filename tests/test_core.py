@@ -172,6 +172,58 @@ def test_session_secret_is_generated_and_persisted(env, tmp_path):
     assert auth.session_secret() == first        # stable across calls, survives restart
 
 
+# ------------------------------------------------------------- report an issue
+def _hit(i, title_len=80, url_len=60):
+    from merge import MergedHit
+    return MergedHit(url="https://example.com/" + "u" * url_len + str(i),
+                     title="T" * title_len + str(i), engines=["exa"], score=0.4,
+                     best_rank=1)
+
+
+class _R:
+    def __init__(self, name, ok=True, ms=100):
+        self.name, self.ok, self.ms, self.error = name, ok, ms, None
+
+
+def test_report_url_carries_query_and_results(env):
+    import urllib.parse
+    render = _fresh("render")
+    hits = [_hit(i) for i in range(10)]
+    url = render._issue_url("best android browser", hits, page=1, per=10,
+                            results=[_R("exa")], engines_on={"exa"},
+                            time_range="any", ss="moderate", labels={"exa": "Exa"})
+    assert url.startswith("https://github.com/")
+    assert "/issues/new?" in url
+    assert len(url) <= render.ISSUE_URL_LIMIT
+    body = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["body"][0]
+    assert "best android browser" in body
+    assert body.count('"pos"') == 10
+    assert "Exa" in body            # engine labels, not raw names
+
+
+def test_report_url_shrinks_to_fit(env, monkeypatch):
+    """A long query must still produce a usable link, not a broken one."""
+    import urllib.parse
+    render = _fresh("render")
+    monkeypatch.setattr(render, "ISSUE_URL_LIMIT", 1600)
+    hits = [_hit(i, 200, 200) for i in range(10)]
+    url = render._issue_url("x" * 200, hits, page=1, per=10, results=[_R("exa")],
+                            engines_on={"exa"}, time_range="any", ss="moderate")
+    assert len(url) <= 1600
+    body = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["body"][0]
+    assert "**Query:**" in body
+    assert "cut to" in body
+    assert body.count('"pos"') < 10
+
+
+def test_report_url_honours_repo_override(env):
+    render = _fresh("render")
+    url = render._issue_url("q", [_hit(0)], page=1, per=10, results=[_R("exa")],
+                            engines_on={"exa"}, time_range="any", ss="moderate",
+                            repo="someone/fork")
+    assert "github.com/someone/fork/issues/new" in url
+
+
 # ------------------------------------------------------------------- rate limit
 def test_rate_limit_trips_and_recovers(env):
     app = _fresh("app")

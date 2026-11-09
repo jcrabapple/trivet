@@ -190,6 +190,9 @@ so an open instance is somebody else's free search engine.
 - **Bangs** — `!w query` jumps straight to a site, using the Kagi bang dataset.
 - **Small-web prior** — curated independent sites get a boost.
 - **OpenSearch** descriptor, so the browser can add Trivet as a search engine.
+- **One-click bad-result reports** — the link under each result set opens a GitHub issue
+  prefilled with the query, the engine timings and a JSON dump of what was shown, shrinking
+  the dump if the URL would get too long. Point it elsewhere with `TRIVET_REPO=owner/name`.
 
 ## Deployment
 
