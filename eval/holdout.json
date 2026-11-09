@@ -1,0 +1,40 @@
+[
+  {
+    "q": "nginx client_max_body_size 413 error",
+    "expect": [
+      "nginx.org/en/docs/http/ngx_http_core_module",
+      "nginx.org/en/docs"
+    ],
+    "note": "holdout: official docs"
+  },
+  {
+    "q": "eastern screech owl call sound",
+    "expect": [
+      "allaboutbirds.org",
+      "audubon.org",
+      "cornell.edu",
+      "birdnote.org"
+    ],
+    "note": "holdout: specialist reference"
+  },
+  {
+    "q": "systemd service restart on failure example",
+    "expect": [
+      "freedesktop.org/software/systemd/man",
+      "systemd.io",
+      "wiki.archlinux.org"
+    ],
+    "note": "holdout: official docs"
+  },
+  {
+    "q": "does magnesium help with sleep",
+    "expect": [
+      "healthline.com",
+      "sleepfoundation.org",
+      "nih.gov",
+      "mayoclinic.org",
+      "ods.od.nih.gov"
+    ],
+    "note": "holdout: health publishers"
+  }
+]

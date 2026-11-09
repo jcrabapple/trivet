@@ -1,0 +1,19 @@
+# secrets
+.env
+*.env
+!.env.example
+
+# local state
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# runtime data and evaluation artefacts (fetched, not source)
+*.db
+*.db-wal
+*.db-shm
+eval/snapshot*.json
+eval/combo-snapshot*.json
+eval/*.lock
+data/user-domains.json

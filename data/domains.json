@@ -1,0 +1,16 @@
+{
+  "_comment": "Curated seed list, coarse on purpose. User additions belong in ~/.config/trivet/domains.json. 'allow' always wins.",
+  "spam": [
+    "ezinearticles.com",
+    "articlecity.com",
+    "articlesbase.com",
+    "blackhatlinks.com",
+    "blackhat.link",
+    "affordablebacklinks.com",
+    "bzoomer.online",
+    "link-finder.net",
+    "crackhive.com",
+    "cine97.online"
+  ],
+  "suspicious": []
+}

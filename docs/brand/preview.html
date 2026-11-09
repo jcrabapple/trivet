@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trivet brand</title>
+<style>
+  .sizes svg{color:var(--accent);display:block;margin:0 auto 6px}
+  .sizes .box{display:block;height:64px;display:flex;align-items:flex-end;justify-content:center}
+  :root{
+    --fg: var(--foreground, #1b1d21);
+    --muted: var(--muted-foreground, #6b7280);
+    --line: var(--border, #e3e6ea);
+    --accent: var(--accent, #1a4fd6);
+    --card: var(--card, #fff);
+    font-family: inherit;
+  }
+  body{margin:0;color:var(--fg);font:14px/1.5 inherit}
+  .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .panel{flex:1 1 300px;border:1px solid var(--line);border-radius:12px;padding:18px 20px;background:var(--card)}
+  .dark{background:#15171b;border-color:#2a2f38}
+  .dark .lbl{color:#9aa3b2}
+  .dark .lock{color:#8ab4f8}
+  h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:600}
+  .lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px;font-weight:600}
+  .lock{display:flex;align-items:center;color:var(--fg)}
+  .lock svg{display:block;height:44px;width:auto}
+  .dark .lock{color:#e7e9ee}
+  .sizes{display:flex;gap:16px;align-items:flex-end;margin-top:6px}
+  .sizes figure{margin:0;text-align:center}
+  .sizes svg{display:block;color:var(--accent);margin:0 auto 6px}
+  .sizes figcaption{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .mock{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+  .mock .brand{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:-.01em}
+  .mock .brand svg{height:20px;width:auto;color:var(--accent)}
+  .mock input{flex:1;border:1px solid var(--line);border-radius:7px;padding:7px 10px;font:inherit;color:var(--muted);background:transparent}
+  .mock button{border:0;border-radius:7px;background:var(--accent);color:#fff;padding:7px 12px;font:inherit;font-weight:600}
+  .note{color:var(--muted);font-size:12px;margin:14px 0 0}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+</head>
+<body>
+
+<div class="row">
+  <div class="panel">
+    <h2>Lockup · light</h2>
+    <div class="lock" id="lock-light"></div>
+    <p class="note">Icon 104u, gap 20u, cap 62u. Everything is <span class="mono">currentColor</span>.</p>
+  </div>
+  <div class="panel dark">
+    <h2>Lockup · dark</h2>
+    <div class="lock" id="lock-dark"></div>
+    <p class="note" style="color:#9aa3b2">Accent <span class="mono">#8ab4f8</span> on <span class="mono">#15171b</span>.</p>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:22px">
+  <h2>Icon at size</h2>
+  <div class="sizes" id="sizes"></div>
+  <p class="note">The surface is a trapezoid, not a bar: a bar on legs is the letter π at 16px, which is what the first pass looked like.</p>
+</div>
+
+<div class="panel" style="margin-top:22px">
+  <h2>In place</h2>
+  <div class="mock">
+    <div class="brand" id="mock-brand"><span>trivet</span></div>
+    <input value="systemd socket activation" readonly>
+    <button>Search</button>
+  </div>
+</div>
+
+<script>
+// Pull the shipped SVGs over HTTP instead of pasting giant path data into a
+// template literal: the preview then renders the actual files, not a copy.
+async function load(path, size, color) {
+  const svg = await (await fetch(path)).text();
+  return svg.replace(/\s(width|height)="[^"]*"/g, '')
+            .replace('<svg', `<svg aria-hidden="true"${size ? ` width="${size}" height="${size}"` : ''}`)
+            .replace('fill="' + (color || '#1a4fd6') + '"', 'fill="currentColor"');
+}
+(async () => {
+  const icon = await load('icon.svg');
+  const lock = await load('lockup.svg');
+  const lockDark = await load('lockup-dark.svg');
+  document.getElementById('lock-light').innerHTML = lock;
+  document.getElementById('lock-dark').innerHTML = lockDark;
+  document.getElementById('mock-brand').insertAdjacentHTML('afterbegin', icon);
+  const sizes = [64, 32, 16];
+  const nodes = await Promise.all(sizes.map(async s => {
+    const svg = await load('icon.svg', s, s);
+    return `<figure><span class="box">${svg}</span><figcaption>${s}</figcaption></figure>`;
+  }));
+  document.getElementById('sizes').innerHTML = nodes.join('');
+})();
+</script>
+</body>
+</html>

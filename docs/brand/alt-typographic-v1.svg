@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="currentColor" role="img" aria-labelledby="title">
+  <title id="title">Trivet — typographic alternate</title>
+  <path d="M224 64H288V192H224Z"/>
+  <path d="M80 144H432V192H80Z"/>
+  <path d="M128 192H192L160 416H96Z"/>
+  <path d="M224 192H288V416H224Z"/>
+  <path d="M320 192H384L416 416H352Z"/>
+</svg>

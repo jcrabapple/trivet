@@ -1,0 +1,223 @@
+[
+  {
+    "q": "python asyncio create_task",
+    "expect": [
+      "docs.python.org/3/library/asyncio-task",
+      "docs.python.org/3/library/asyncio"
+    ],
+    "note": "canonical docs page"
+  },
+  {
+    "q": "postgresql vacuum full vs analyze",
+    "expect": [
+      "postgresql.org/docs/current/sql-vacuum",
+      "postgresql.org/docs/current/routine-vacuuming",
+      "postgresql.org/docs/current/sql-analyze"
+    ],
+    "note": "both command references are correct answers"
+  },
+  {
+    "q": "fedora 44 release date",
+    "expect": [
+      "fedoraproject.org/wiki/Releases/44",
+      "fedoraproject.org/wiki/Releases/44/Schedule",
+      "redhat.com/en/blog/announcing-fedora-44",
+      "fedoramagazine.org/announcing-fedora-linux-44"
+    ],
+    "note": "the date itself, not release notes or party pages"
+  },
+  {
+    "q": "rust ownership and borrowing",
+    "expect": [
+      "doc.rust-lang.org/book/ch04",
+      "doc.rust-lang.org/nomicon/borrow-splitting"
+    ],
+    "note": "the book chapter"
+  },
+  {
+    "q": "systemd timer vs cron",
+    "expect": [
+      "freedesktop.org/software/systemd/man/latest/systemd.timer",
+      "freedesktop.org/software/systemd/man/systemd.timer",
+      "systemd.io",
+      "wiki.archlinux.org/title/systemd/Timers"
+    ],
+    "note": "reference docs over blog comparisons"
+  },
+  {
+    "q": "nginx gzip and brotli module config",
+    "expect": [
+      "nginx.org/en/docs/http/ngx_http_gzip_module",
+      "github.com/google/ngx_brotli",
+      "nginx.org/en/docs/http/ngx_http_gunzip_module"
+    ],
+    "note": "module reference"
+  },
+  {
+    "q": "sqlite wal mode concurrency",
+    "expect": [
+      "sqlite.org/wal.html",
+      "sqlite.org/lang_transaction.html",
+      "sqlite.org/lockingv3.html"
+    ],
+    "note": "sqlite.org is the only authority here"
+  },
+  {
+    "q": "docker compose depends_on healthcheck",
+    "expect": [
+      "docs.docker.com/compose/how-tos/startup-order",
+      "docs.docker.com/reference/compose-file/services",
+      "docs.docker.com/compose/compose-file/05-services"
+    ],
+    "note": "compose reference"
+  },
+  {
+    "q": "esp32 deep sleep current consumption",
+    "expect": [
+      "docs.espressif.com/projects/esp-idf",
+      "docs.espressif.com/projects/arduino-esp32",
+      "espressif.com/sites/default/files/documentation"
+    ],
+    "note": "vendor datasheet/API docs"
+  },
+  {
+    "q": "cloudflare tunnel config ingress rules",
+    "expect": [
+      "developers.cloudflare.com/tunnel/configuration",
+      "developers.cloudflare.com/tunnel/get-started",
+      "local-management/configuration-file",
+      "developers.cloudflare.com/tunnel/concepts/routing"
+    ],
+    "note": "vendor docs"
+  },
+  {
+    "q": "fedora 44 gnome 50 changes",
+    "expect": [
+      "fedoraproject.org/wiki/Releases/44/ChangeSet",
+      "fedoramagazine.org",
+      "redhat.com/en/blog/announcing-fedora-44",
+      "phoronix.com/news/Fedora-44"
+    ],
+    "note": "release change set"
+  },
+  {
+    "q": "kagi search api pricing",
+    "expect": [
+      "kagi.com/api",
+      "help.kagi.com/kagi/api",
+      "kagi.com/pricing"
+    ],
+    "note": "vendor page; tests that a non-boosted domain can still win on title"
+  },
+  {
+    "q": "best mechanical keyboard 2026",
+    "expect": [
+      "rtings.com/keyboard",
+      "tomsguide.com/best-picks/best-mechanical-keyboards",
+      "pcmag.com/picks/the-best-mechanical-keyboards",
+      "keyboardbench.com",
+      "reddit.com/r/keyboards"
+    ],
+    "note": "no official docs exist: the answer is review sites and community threads"
+  },
+  {
+    "q": "grub boots into windows bitlocker",
+    "expect": [
+      "superuser.com",
+      "askubuntu.com",
+      "forums.fedoraproject.org",
+      "wiki.archlinux.org/title/GRUB",
+      "ask.fedoraproject.org"
+    ],
+    "note": "answer lives in forums, not vendor docs"
+  },
+  {
+    "q": "hyprland vs sway which is better",
+    "expect": [
+      "hyprland.org",
+      "swaywm.org",
+      "reddit.com/r/hyprland",
+      "reddit.com/r/swaywm",
+      "github.com/hyprwm/Hyprland/discussions",
+      "wiki.hypr.land"
+    ],
+    "note": "project pages plus community opinion"
+  },
+  {
+    "q": "why does my sourdough starter smell like acetone",
+    "expect": [
+      "kingarthurbaking.com",
+      "theperfectloaf.com",
+      "reddit.com/r/Sourdough",
+      "breadtopia.com",
+      "reddit.com/r/Breadit"
+    ],
+    "note": "specialist baking sites, no docs, no .gov"
+  },
+  {
+    "q": "sleeping with a fan on health effects",
+    "expect": [
+      "healthline.com",
+      "sleepfoundation.org",
+      "mayoclinic.org",
+      "webmd.com",
+      "clevelandclinic.org"
+    ],
+    "note": "health publishers; only .gov-adjacent if NIH appears"
+  },
+  {
+    "q": "vinyl record grading goldmine vs vg+",
+    "expect": [
+      "discogs.com",
+      "goldminerecords.com",
+      "reddit.com/r/vinyl",
+      "thevinylfactory.com",
+      "recordcollectormag.com"
+    ],
+    "note": "marketplace reference, not a standards body"
+  },
+  {
+    "q": "Android Web browsers",
+    "expect": [
+      "androidauthority.com/best-android",
+      "zdnet.com/article",
+      "howtogeek.com/the-best-android",
+      "xda-developers.com/best-web-browsers",
+      "androidpolice.com/best-android",
+      "tomsguide.com/best-picks/best-android-browsers"
+    ],
+    "note": "software choice: current comparison from an established publisher, not an encyclopedia"
+  },
+  {
+    "q": "best android browser 2026",
+    "expect": [
+      "androidauthority.com/best-android",
+      "zdnet.com/article",
+      "xda-developers.com",
+      "androidpolice.com",
+      "tomsguide.com",
+      "pcmag.com"
+    ],
+    "note": "year-stamped listicle query"
+  },
+  {
+    "q": "best vpn for android",
+    "expect": [
+      "tomsguide.com/best-picks/best-vpn",
+      "pcmag.com/picks/the-best-vpn",
+      "zdnet.com/article/best-vpn",
+      "androidauthority.com/best-vpn"
+    ],
+    "note": "software/service choice"
+  },
+  {
+    "q": "best note taking app for android",
+    "expect": [
+      "androidpolice.com",
+      "androidauthority.com/best-note",
+      "zdnet.com/article/best-note",
+      "tomsguide.com/best-picks/best-note-taking-apps"
+    ],
+    "note": "software choice"
+  }
+]
