@@ -10,6 +10,7 @@ from datetime import datetime
 from html import escape
 from urllib.parse import urlencode, urlsplit
 
+from _version import __version__ as VERSION
 from merge import MergedHit
 from providers import EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT, RECOMMENDED_NOTE, Spec
 
@@ -834,7 +835,7 @@ def about(engines: list[Spec], theme: str = "") -> str:
   <div class="nav"><a href="/preferences">Preferences</a></div>
 </div></header>
 <div class="wrap"><div class="prefs">
-  <h1>About</h1>
+  <h1>About <span class="sub" style="font-size:12px">{escape(VERSION)}</span></h1>
   <p>A search engine for humans. Each query fans out to independent search
   APIs, and the results are fused with Reciprocal Rank Fusion: an ordering built
   from each engine's ranks, not from scores that are not comparable between

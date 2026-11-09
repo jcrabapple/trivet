@@ -79,7 +79,9 @@ def _check_auth_config(host: str) -> None:
         print("WARNING: authentication disabled, bound to loopback only",
               file=sys.stderr, flush=True)
 
-app = FastAPI(title="trivet", docs_url="/api/docs")
+from _version import __version__   # noqa: E402  (kept next to the app for brevity)
+
+app = FastAPI(title="trivet", version=__version__, docs_url="/api/docs")
 
 
 def _refresh_datasets() -> None:
@@ -634,7 +636,8 @@ async def api_click(request: Request) -> JSONResponse:
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    return {"ok": True, "engines": [s.name for s in ENGINES], "cache": cache.stats(),
+    return {"ok": True, "version": __version__,
+            "engines": [s.name for s in ENGINES], "cache": cache.stats(),
             "datasets": {"smallweb": smallweb.size(), "bangs": bangs.size()}}
 
 
