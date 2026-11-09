@@ -21,7 +21,7 @@ import secrets
 import time
 
 COOKIE_NAME = "tv_session"
-DEFAULT_DAYS = 90
+DEFAULT_DAYS = 14
 MAX_FAILURES = 10
 FAILURE_WINDOW = 15 * 60
 
@@ -45,8 +45,9 @@ def issue_token(user: str, days: int | None = None) -> str:
     secret = session_secret()
     if not secret:
         return ""
-    exp = int(time.time()) + (days or session_days()) * 86400
-    payload = f"{user}|{exp}".encode()
+    now = int(time.time())
+    exp = now + (days or session_days()) * 86400
+    payload = f"{user}|{exp}|{now}".encode()
     return f"{base64.urlsafe_b64encode(payload).decode().rstrip('=')}.{_sign(payload, secret)}"
 
 
@@ -64,8 +65,12 @@ def verify_token(token: str) -> str | None:
     if not hmac.compare_digest(_sign(payload, secret), sig):
         return None
     try:
-        user, exp = payload.decode().rsplit("|", 1)
+        user, exp, issued = payload.decode().rsplit("|", 2)
         if int(exp) < time.time():
+            return None
+        # TRIVET_SESSION_EPOCH: bump it to evict every existing session without
+        # touching the secret that also protects stored API keys
+        if int(issued) < int(os.environ.get("TRIVET_SESSION_EPOCH", "0") or 0):
             return None
     except (ValueError, UnicodeDecodeError):
         return None
@@ -78,6 +83,7 @@ def new_secret() -> str:
 
 # ---------------------------------------------------------- login throttling
 _failures: dict[str, list[float]] = {}
+MAX_TRACKED_IPS = 4096
 
 
 def failures_for(ip: str) -> int:
@@ -92,7 +98,15 @@ def blocked(ip: str) -> bool:
 
 
 def record_failure(ip: str) -> None:
-    _failures.setdefault(ip, []).append(time.time())
+    now = time.time()
+    _failures.setdefault(ip, []).append(now)
+    if len(_failures) > MAX_TRACKED_IPS:
+        # a spoofable client key must not be able to grow this dict forever
+        for key in [k for k, v in _failures.items() if not v or now - v[-1] > FAILURE_WINDOW]:
+            _failures.pop(key, None)
+        if len(_failures) > MAX_TRACKED_IPS:
+            for key in list(_failures)[: len(_failures) - MAX_TRACKED_IPS]:
+                _failures.pop(key, None)
 
 
 def clear_failures(ip: str) -> None:

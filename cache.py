@@ -23,9 +23,19 @@ TTL_SECONDS = int(os.environ.get("TRIVET_CACHE_TTL", "900"))   # 15 min
 MAX_ROWS = 1000
 
 
+
+def _harden(conn: sqlite3.Connection, path: str) -> None:
+    """The database holds query history and key ciphertext; keep it owner-only."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suffix, 0o600)
+        except OSError:
+            pass
+
 def _connect() -> sqlite3.Connection:
     os.makedirs(CACHE_DIR, exist_ok=True)
     conn = sqlite3.connect(CACHE_PATH, timeout=5)
+    _harden(conn, CACHE_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
     conn.execute("""
@@ -45,8 +55,11 @@ def normalize_query(query: str) -> str:
 
 
 def make_key(query: str, engines: list[str], time_range: str, safesearch: str,
-             depth: int) -> str:
-    raw = json.dumps([normalize_query(query), sorted(engines), time_range, safesearch, depth])
+             depth: int, deep_policy: str = "auto") -> str:
+    # deep_policy changes what actually ran, so it has to change the key: otherwise
+    # an "always" request is served a cached page that skipped the deep engine
+    raw = json.dumps([normalize_query(query), sorted(engines), time_range, safesearch,
+                      depth, deep_policy])
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

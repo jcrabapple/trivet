@@ -34,9 +34,19 @@ PRIOR_CTR = 0.35
 PRIOR_WEIGHT = 8.0
 
 
+
+def _harden(conn: sqlite3.Connection, path: str) -> None:
+    """The database holds query history and key ciphertext; keep it owner-only."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suffix, 0o600)
+        except OSError:
+            pass
+
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=5)
+    _harden(conn, DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript("""
@@ -74,6 +84,19 @@ def new_impression_id() -> str:
     return secrets.token_urlsafe(9)
 
 
+RETENTION_DAYS = 90
+
+
+def _prune(conn) -> None:
+    """Impressions and clicks grow by `per` rows per search and were never removed."""
+    cutoff = time.time() - RETENTION_DAYS * 86400
+    for table in ("impressions", "clicks"):
+        try:
+            conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
+        except sqlite3.Error:
+            pass
+
+
 def log_impression(impression_id: str, query: str, ranker: str, engines: Iterable[str],
                    hits: list[Any], start_position: int = 1, is_test: bool = False) -> None:
     """Store the page that was shown, one row per position.
@@ -97,6 +120,7 @@ def log_impression(impression_id: str, query: str, ranker: str, engines: Iterabl
                 "INSERT OR REPLACE INTO impressions (impression_id, ts, query, ranker, engines,"
                 " position, url, domain, score, features, is_test)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            _prune(conn)
     except sqlite3.Error:
         pass   # telemetry must never break a search
 

@@ -14,11 +14,13 @@ import base64
 import binascii
 import hmac
 import os
+import sys
 import threading
 import time
 from dataclasses import asdict
 from typing import Any
-from urllib.parse import quote, urlencode
+from xml.sax.saxutils import escape as xml_escape
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 from fastapi import FastAPI, Query, Request
@@ -48,6 +50,34 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 AUTH_USER = os.environ.get("TRIVET_USER", "")
 AUTH_PASS = os.environ.get("TRIVET_PASS", "")
 PUBLIC_PATHS = {"/healthz", "/favicon.svg", "/login", "/logout"}
+
+# Filled in by __main__ so request handling can tell a local development instance
+# apart from one exposed on an interface. Localhost is the only place where
+# running without credentials is defensible.
+BIND_HOST = os.environ.get("TRIVET_BIND_HOST", "127.0.0.1")
+
+
+def _loopback(host: str) -> bool:
+    return host in ("127.0.0.1", "::1", "localhost", "")
+
+
+def _check_auth_config(host: str) -> None:
+    """Fail at startup rather than open at runtime.
+
+    Two ways this used to go wrong quietly: half the pair set (leaving the app
+    wide open), and no credentials at all on a non-loopback bind.
+    """
+    if bool(AUTH_USER) != bool(AUTH_PASS):
+        raise SystemExit(
+            "Set both TRIVET_USER and TRIVET_PASS, or neither: a half-configured "
+            "credential pair would leave the instance open.")
+    if not (AUTH_USER and AUTH_PASS):
+        if not _loopback(host):
+            raise SystemExit(
+                f"Refusing to bind {host} with no credentials. Every search spends "
+                "the operator's API budget. Set TRIVET_USER and TRIVET_PASS.")
+        print("WARNING: authentication disabled, bound to loopback only",
+              file=sys.stderr, flush=True)
 
 app = FastAPI(title="trivet", docs_url="/api/docs")
 
@@ -113,11 +143,70 @@ async def require_auth(request: Request, call_next):
     return RedirectResponse(f"/login?next={nxt}", status_code=303)
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Registered after require_auth, so it also wraps redirects and 401s.
+
+    The page has one inline <style> and one inline <script> and loads nothing
+    external, so a strict policy costs nothing. `unsafe-inline` is required by the
+    inline beacon; frame-ancestors, base-uri and form-action still bite.
+    """
+    response = await call_next(request)
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    return response
+
+
 # ------------------------------------------------------------------ helpers
 def _cookie(request: Request, name: str, default: str = "") -> str:
     """tv_* is current; ms_* is the pre-rename prefix, still read so existing
     preference cookies and sessions survive the rename."""
     return request.cookies.get(f"tv_{name}") or request.cookies.get(f"ms_{name}", default)
+
+
+_TRUSTED_PROXIES = {"127.0.0.1", "::1"}
+
+
+def _client_ip(request: Request) -> str:
+    """Bucket key for throttling and failure counting.
+
+    A forwarding header is only believed when the immediate peer is the local
+    proxy. Trusting it unconditionally let a client mint a new bucket per request
+    (throttle bypass) or share one with everybody (global lockout).
+    """
+    peer = request.client.host if request.client else "unknown"
+    if peer in _TRUSTED_PROXIES:
+        forwarded = (request.headers.get("cf-connecting-ip")
+                     or request.headers.get("x-forwarded-for", "").split(",")[0].strip())
+        if forwarded:
+            return forwarded
+    return peer
+
+
+# --- search rate limit: every query costs money at a vendor ------------------
+_RECENT: dict[str, list[float]] = {}
+RATE_LIMIT, RATE_WINDOW = 40, 60.0
+
+
+def _rate_ok(bucket: str) -> bool:
+    now = time.time()
+    hits = _RECENT.get(bucket, [])
+    hits = [t for t in hits if now - t < RATE_WINDOW]
+    if len(hits) >= RATE_LIMIT:
+        _RECENT[bucket] = hits
+        return False
+    hits.append(now)
+    _RECENT[bucket] = hits
+    if len(_RECENT) > 2000:            # keep the dict from growing without bound
+        for key in [k for k, v in _RECENT.items() if not v or now - v[-1] > RATE_WINDOW]:
+            _RECENT.pop(key, None)
+    return True
 
 
 def _csrf(request: Request) -> str:
@@ -179,12 +268,17 @@ async def _run_specs(specs, query, fetch, opts, results_out):
                    10.0 if s.tier == "deep" else ENGINE_TIMEOUT, opts) for s in specs])
 
 
+MAX_QUERY = 512
+
+
 async def search(query: str, engine_names: list[str], page: int, per: int,
                  ss: str, time_range: str, use_cache: bool = True,
                  ranker: str = "v1", deep_policy: str = "auto") -> dict[str, Any]:
+    query = query[:MAX_QUERY]
     specs = [BY_NAME[n] for n in engine_names if n in BY_NAME]
     fetch = min(50, max(per, page * per))
-    key = cache.make_key(query, [s.name for s in specs], time_range, ss, fetch)
+    key = cache.make_key(query, [s.name for s in specs], time_range, ss, fetch,
+                         deep_policy)
 
     if use_cache:
         hit = cache.get(key)
@@ -256,10 +350,19 @@ def _order(merged: list, query: str, ranker: str, reps: dict | None = None) -> l
 
 # ------------------------------------------------------------------- routes
 def _safe_next(raw: str) -> str:
-    """Only allow same-site paths, so ?next= cannot bounce a fresh login elsewhere."""
-    if raw.startswith("/") and not raw.startswith("//") and "\\" not in raw:
-        return raw
-    return "/"
+    """Only same-site paths, as an allowlist.
+
+    Denying "//" and backslashes was one character away from being wrong; parsing
+    the value and rejecting anything with a scheme or netloc is unambiguous.
+    """
+    if not raw.startswith("/") or raw.startswith("//"):
+        return "/"
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raw):
+        return "/"
+    parts = urlsplit(raw)
+    if parts.scheme or parts.netloc:
+        return "/"
+    return raw
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -275,8 +378,7 @@ async def login_submit(request: Request) -> Response:
     nxt = _safe_next(str(form.get("next", "/")))
     password = str(form.get("password", ""))
     user = str(form.get("user", AUTH_USER)) or AUTH_USER
-    ip = (request.headers.get("cf-connecting-ip")
-          or (request.client.host if request.client else "unknown"))
+    ip = _client_ip(request)
 
     if auth.blocked(ip):
         return HTMLResponse(render.login(nxt, "Too many attempts. Wait 15 minutes."),
@@ -313,7 +415,7 @@ async def index(request: Request) -> HTMLResponse:
 @app.get("/search", response_class=HTMLResponse)
 async def search_page(
     request: Request,
-    q: str = Query("", description="query"),
+    q: str = Query("", max_length=512, description="query"),
     page: int = Query(1, ge=1, le=20),
     time: str | None = Query(None),
     ss: str | None = Query(None),
@@ -324,6 +426,9 @@ async def search_page(
 ) -> HTMLResponse:
     q = q.strip()
     theme = _cookie(request, "theme")
+    if q and not _rate_ok(_session(request) or _client_ip(request)):
+        return HTMLResponse(render.rate_limited(theme), status_code=429,
+                            headers={"Retry-After": "60"})
     chosen = _pick_engines(request, engines)
     ss_cur, per_cur, time_range = _prefs(request, ss, per, time)
 
@@ -414,8 +519,14 @@ async def keys_get(request: Request, saved: str | None = Query(None),
 
 @app.post("/settings/keys")
 async def keys_post(request: Request) -> Response:
+    if not (AUTH_USER and AUTH_PASS) and not _loopback(BIND_HOST):
+        # no session exists to bind a CSRF token to, and anyone can reach this page
+        return RedirectResponse(
+            "/settings/keys?error=" + quote("Key changes require authentication."),
+            status_code=303)
     form = {k: v for k, v in (await request.form()).items() if isinstance(v, str)}
-    if form.get("csrf") != _csrf(request):
+    expected = _csrf(request)
+    if not expected or not hmac.compare_digest(form.get("csrf", ""), expected):
         return RedirectResponse("/settings/keys?error=" + quote("Bad or expired form token."),
                                 status_code=303)
     key = form.get("key", "")
@@ -456,7 +567,20 @@ async def about(request: Request) -> HTMLResponse:
 
 @app.get("/opensearch.xml")
 async def opensearch(request: Request) -> Response:
-    base = str(request.base_url).rstrip("/")
+    """The host comes from the request, so it must be validated and escaped: a
+    forged Host header used to be reflected straight into the XML."""
+    base = os.environ.get("TRIVET_BASE_URL", "").rstrip("/")
+    if not base:
+        parts = urlsplit(str(request.base_url))
+        host = (parts.hostname or "").lower()
+        allowed = {h.strip().lower() for h in
+                   os.environ.get("TRIVET_HOSTS", "").split(",") if h.strip()}
+        if allowed and host not in allowed:
+            return Response("unknown host", status_code=400, media_type="text/plain")
+        if not host or not all(c.isalnum() or c in ".-:" for c in host):
+            return Response("bad host", status_code=400, media_type="text/plain")
+        base = f"{parts.scheme}://{parts.netloc}"
+    base = xml_escape(base)
     return Response(render.OPENSEARCH.format(base=base),
                     media_type="application/opensearchdescription+xml")
 
@@ -467,7 +591,7 @@ async def favicon() -> Response:
 
 
 @app.get("/debug/rank", response_class=HTMLResponse)
-async def debug_rank(request: Request, q: str = Query(""),
+async def debug_rank(request: Request, q: str = Query("", max_length=512),
                      engines: str | None = Query(None),
                      nocache: int = Query(0)) -> HTMLResponse:
     if not q.strip():
@@ -508,7 +632,7 @@ async def healthz() -> dict[str, Any]:
 
 
 @app.get("/api/search")
-async def api_search(request: Request, q: str = Query(..., min_length=1),
+async def api_search(request: Request, q: str = Query(..., min_length=1, max_length=512),
                      page: int = Query(1, ge=1, le=20),
                      limit: int = Query(10, ge=1, le=50),
                      time: str | None = None, ss: str | None = None,
@@ -516,6 +640,9 @@ async def api_search(request: Request, q: str = Query(..., min_length=1),
                      nocache: int = Query(0),
                      rank: str = Query("v1"),
                      explain: int = Query(0)) -> JSONResponse:
+    if not _rate_ok(_session(request) or _client_ip(request)):
+        return JSONResponse({"ok": False, "error": "rate limited"},
+                            status_code=429, headers={"Retry-After": "60"})
     bang = bangs.resolve(q)
     if bang:
         return JSONResponse({"query": q, "bang": bang, "results": [],
@@ -577,5 +704,7 @@ if __name__ == "__main__":
     if args.query:
         cli(args.query, args.page, args.per, args.time)
     else:
+        globals()["BIND_HOST"] = args.host
+        _check_auth_config(args.host)     # refuse to start open on a public interface
         import uvicorn
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

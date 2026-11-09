@@ -15,9 +15,19 @@ DB_PATH = os.path.expanduser("~/.cache/trivet/cache.db")
 RETENTION_DAYS = 45
 
 
+
+def _harden(conn: sqlite3.Connection, path: str) -> None:
+    """The database holds query history and key ciphertext; keep it owner-only."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suffix, 0o600)
+        except OSError:
+            pass
+
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=5)
+    _harden(conn, DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=2000")
     conn.execute("""

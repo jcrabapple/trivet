@@ -26,7 +26,23 @@ class NoSecret(RuntimeError):
     """Raised when no secret is configured, so nothing can be encrypted safely."""
 
 
+
+def _harden(conn: sqlite3.Connection, path: str) -> None:
+    """The database holds query history and key ciphertext; keep it owner-only."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suffix, 0o600)
+        except OSError:
+            pass
+
 def _secret() -> str:
+    """Key-encryption secret.
+
+    `TRIVET_SECRET_KEY` is the intended one. `TRIVET_SESSION_SECRET` is still
+    accepted so an installation that stored keys before the split keeps working,
+    but rotating a *session* secret should not destroy credentials, so anything
+    written now uses the dedicated key and `migrate()` re-encrypts old rows.
+    """
     for name in ("TRIVET_SECRET_KEY", "TRIVET_SESSION_SECRET"):
         value = os.environ.get(name, "").strip()
         if value:
@@ -34,15 +50,20 @@ def _secret() -> str:
     raise NoSecret("Set TRIVET_SECRET_KEY (or TRIVET_SESSION_SECRET) to store API keys.")
 
 
-def _aead() -> AESGCM:
+def _aead_for(secret: str) -> AESGCM:
     raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=SALT, info=b"").derive(
-        _secret().encode())
+        secret.encode())
     return AESGCM(raw)
+
+
+def _aead() -> AESGCM:
+    return _aead_for(_secret())
 
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=5)
+    _harden(conn, DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=2000")
     conn.execute("""
@@ -84,13 +105,47 @@ def load() -> dict[str, str]:
             rows = conn.execute("SELECT name, nonce, ciphertext FROM api_keys").fetchall()
     except sqlite3.Error:
         return out
-    aead = _aead()
+    # try the current key first, then the legacy session secret
+    candidates = []
+    for name_ in ("TRIVET_SECRET_KEY", "TRIVET_SESSION_SECRET"):
+        value = os.environ.get(name_, "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    for name, nonce, ct in rows:
+        for secret in candidates:
+            try:
+                out[name] = _aead_for(secret).decrypt(nonce, ct, name.encode()).decode()
+                break
+            except Exception:  # noqa: BLE001 - wrong key is expected while migrating
+                continue
+    return out
+
+
+def migrate() -> int:
+    """Re-encrypt rows still readable only by the legacy key. Returns the count."""
+    primary = os.environ.get("TRIVET_SECRET_KEY", "").strip()
+    legacy = os.environ.get("TRIVET_SESSION_SECRET", "").strip()
+    if not primary or not legacy or primary == legacy:
+        return 0
+    try:
+        with _conn() as conn:
+            rows = conn.execute("SELECT name, nonce, ciphertext FROM api_keys").fetchall()
+    except sqlite3.Error:
+        return 0
+    moved = 0
     for name, nonce, ct in rows:
         try:
-            out[name] = aead.decrypt(nonce, ct, name.encode()).decode()
-        except Exception:  # noqa: BLE001 - rotated secret makes old rows unreadable
+            _aead_for(primary).decrypt(nonce, ct, name.encode())
+            continue                       # already under the primary key
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            value = _aead_for(legacy).decrypt(nonce, ct, name.encode()).decode()
+        except Exception:  # noqa: BLE001
             continue
-    return out
+        save(name, value)
+        moved += 1
+    return moved
 
 
 def status() -> dict[str, dict]:

@@ -172,6 +172,9 @@ def _clean(text: Any, limit: int = 240) -> str:
     return cut + "…"
 
 
+_ALLOWED_SCHEMES = ("http://", "https://")
+
+
 def _hits(items, engine: str, *, url_key="url", title_key="title",
           snippet_keys=("snippet", "description", "content", "text", "excerpt", "excerpts"),
           published_key=None) -> list[Hit]:
@@ -179,9 +182,9 @@ def _hits(items, engine: str, *, url_key="url", title_key="title",
     for i, it in enumerate(items or [], start=1):
         if not isinstance(it, dict):
             continue
-        url = it.get(url_key) or it.get("link") or it.get("href") or ""
-        if not url:
-            continue
+        url = str(it.get(url_key) or it.get("link") or it.get("href") or "").strip()
+        if not url.lower().startswith(_ALLOWED_SCHEMES):
+            continue          # a javascript: or data: URL is never a search result
         snippet = ""
         for sk in snippet_keys:
             val = it.get(sk)

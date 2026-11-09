@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from merge import MergedHit
 from providers import EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT, RECOMMENDED_NOTE, Spec
@@ -355,7 +355,7 @@ def _result(hit: MergedHit, engines: dict[str, Spec], position: int = 0,
     return f"""<article class="res">
   <div class="src"><span class="dom">{escape(hit.domain)}</span>{date}{_flag(rep)}
     <span class="engines">{badges}</span></div>
-  <h2><a href="{escape(hit.url)}" rel="noopener"{' target="_blank"' if new_tab else ''} data-pos="{position}">{escape(hit.title)}</a></h2>
+  <h2><a href="{escape(_safe_href(hit.url))}" rel="noopener"{' target="_blank"' if new_tab else ''} data-pos="{position}">{escape(hit.title)}</a></h2>
   <div class="url">{escape(hit.url)}</div>
   {f'<p>{escape(hit.snippet)}</p>' if hit.snippet else ''}
   {dupe}
@@ -442,6 +442,29 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
         body = body.replace('<div class="wrap">', f'<div class="wrap"><div class="errbox">{escape(error)}</div>', 1)
     return layout(f"{q} · trivet" if q else "trivet", body, theme,
                   impression_id)
+
+
+def _safe_href(url: str) -> str:
+    """Only http(s) links reach an href. html.escape does not touch a scheme, and
+    a javascript: URL from a vendor payload would otherwise be a click away from
+    running in this origin."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "#"
+    return url if parts.scheme.lower() in ("http", "https") else "#"
+
+
+def rate_limited(theme: str = "") -> str:
+    body = f"""<div class="wrap"><div class="home" style="padding-top:18vh">
+  <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
+  <div class="tag">Too many searches. Wait a minute and try again.</div>
+  <p style="color:var(--muted);font-size:13px;max-width:420px;margin:14px auto 0">
+  Every query spends real money against a paid API, so the instance limits how
+  many one client can issue per minute.</p>
+  <p><a href="/">Back to search</a></p>
+</div></div>"""
+    return layout("Slow down · trivet", body, theme)
 
 
 def _human_age(seconds: float) -> str:
@@ -586,8 +609,8 @@ def rank_debug(q: str, ranked: list, rrf: list, cfg: dict, cached: bool,
             f"<tr><td>{i}</td><td>{move} {arrow}</td><td>{item.score:.3f}</td>{cells}"
             f"<td class='pen'>{f.penalties:.2f}</td>"
             f"<td>{escape(f.reputation)}</td>"
-            f"<td><a href='{escape(item.hit.url)}' rel='noopener'>{escape(item.hit.title[:78])}</a>"
-            f"<div class='d'>{escape(item.hit.domain)} · {f.intent}"
+            f"<td><a href='{escape(_safe_href(item.hit.url))}' rel='noopener'>{escape(item.hit.title[:78])}</a>"
+            f"<div class='d'>{escape(item.hit.domain)} · {escape(str(f.intent))}"
             f"{' · ' + str(f.published_days) + 'd old' if f.published_days is not None else ''}</div></td></tr>")
     body = f"""<div class="wrap" style="max-width:1180px">
   <h1 style="font-size:19px;margin:22px 0 6px">Ranking: <b>{escape(q)}</b></h1>
