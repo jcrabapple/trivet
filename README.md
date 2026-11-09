@@ -58,13 +58,37 @@ cp .env.example .env      # edit it
 python3 app.py --port 8952
 ```
 
-Or with Docker:
+### Docker
+
+A published image is built for `linux/amd64` and `linux/arm64` — the arm64 build is
+there for the Raspberry Pi and similar boxes people actually self-host on.
 
 ```bash
-docker build -t trivet .
-docker run -p 8952:8952 -v trivet-data:/data \
-  -e TRIVET_USER=admin -e TRIVET_PASS=change-me trivet
+docker run -d --name trivet -p 8952:8952 \
+  -v trivet-data:/data \
+  -e TRIVET_USER=admin \
+  -e TRIVET_PASS=change-me \
+  -e TRIVET_SECRET_KEY="$(docker run --rm python:3.12-slim python -c 'import secrets;print(secrets.token_urlsafe(48))')" \
+  ghcr.io/jcrabapple/trivet:latest
 ```
+
+Or with Compose, which reads `.env` if you have one:
+
+```bash
+cp .env.example .env      # add credentials and keys
+docker compose up -d
+```
+
+Tags: `latest` and `X.Y.Z` on releases, `edge` on every push to `main`.
+
+**Everything lives in `/data`** (`HOME` is set to it inside the image): the SQLite
+database, the encrypted key store, the generated session secret and the downloaded
+datasets. Mounting that volume is what makes `docker compose down && docker compose up`
+non-destructive. Without `TRIVET_USER` and `TRIVET_PASS` the container deliberately
+refuses to start, because it binds `0.0.0.0` and every search costs the operator money.
+
+The image runs as uid `10001` and needs nothing else — no build tools, no external
+services. `/healthz` is unauthenticated so container healthchecks work.
 
 Open <http://127.0.0.1:8952>. With no keys configured the page still loads and tells you
 that no engines are available.

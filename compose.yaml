@@ -1,0 +1,37 @@
+# docker compose up -d
+#
+# Reads .env if it exists (credentials and API keys); anything set there is optional.
+# All state lives in the trivet-data volume, so recreating the container keeps the
+# query cache, the stored API keys and the generated session secret.
+
+services:
+  trivet:
+    image: ghcr.io/jcrabapple/trivet:${TRIVET_TAG:-latest}
+    build:
+      context: .
+    container_name: trivet
+    restart: unless-stopped
+    ports:
+      - "8952:8952"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Set these in .env or here. Without credentials the app refuses to bind a
+      # non-loopback address, which inside a container means it will not start.
+      TRIVET_USER: ${TRIVET_USER:-}
+      TRIVET_PASS: ${TRIVET_PASS:-}
+      TRIVET_SECRET_KEY: ${TRIVET_SECRET_KEY:-}
+      TRIVET_SESSION_SECRET: ${TRIVET_SESSION_SECRET:-}
+      TRIVET_DB: /data/cache.db
+    volumes:
+      - trivet-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8952/healthz', timeout=2).status == 200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  trivet-data:
