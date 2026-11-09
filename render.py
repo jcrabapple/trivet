@@ -733,7 +733,9 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
         else:
             state = '<span class="kstate off">not set</span>'
         disabled = "" if can_store else " disabled"
-        remove = (f'<button class="kdel" name="action" value="delete"{disabled}>Remove</button>'
+        remove = (f'<button class="kdel" name="action" value="delete" formnovalidate'
+                  f' onclick="return confirm(\'Remove this key? The engine stops working '
+                  f'until a new one is saved.\')"{disabled}>Remove</button>'
                   if info else "")
         return f"""<form class="krow" method="post" action="/settings/keys">
       <input type="hidden" name="csrf" value="{escape(csrf)}">
@@ -742,7 +744,7 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
         <span class="ksub">{escape(spec.tier)} · {escape(key_name)}</span></div>
       <div class="kstate-cell">{state}</div>
       <input class="kinput" type="password" name="value" placeholder="paste key"
-             autocomplete="off" spellcheck="false"{disabled}>
+             autocomplete="off" spellcheck="false" required{disabled}>
       <div class="kacts"><button name="action" value="save"{disabled}>Save</button>{remove}</div>
     </form>"""
 
