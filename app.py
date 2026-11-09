@@ -357,6 +357,9 @@ def _safe_next(raw: str) -> str:
     """
     if not raw.startswith("/") or raw.startswith("//"):
         return "/"
+    # browsers normalise a backslash to "/", so "/\evil.com" is "//evil.com"
+    if "\\" in raw:
+        return "/"
     if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raw):
         return "/"
     parts = urlsplit(raw)
@@ -389,6 +392,10 @@ async def login_submit(request: Request) -> Response:
 
     auth.clear_failures(ip)
     token = auth.issue_token(AUTH_USER)
+    if not token:
+        return HTMLResponse(
+            render.login(nxt, "Cannot sign a session: no session secret is configured."),
+            status_code=500)
     resp = RedirectResponse(nxt, status_code=303)
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     resp.set_cookie(auth.COOKIE_NAME, token, max_age=auth.session_days() * 86400,

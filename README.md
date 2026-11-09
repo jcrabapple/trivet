@@ -55,6 +55,14 @@ cp .env.example .env      # edit it
 python3 app.py --port 8952
 ```
 
+Or with Docker:
+
+```bash
+docker build -t trivet .
+docker run -p 8952:8952 -v trivet-data:/data \
+  -e TRIVET_USER=admin -e TRIVET_PASS=change-me trivet
+```
+
 Open <http://127.0.0.1:8952>. With no keys configured the page still loads and tells you
 that no engines are available.
 
@@ -109,6 +117,16 @@ not automatically better — weak engines add noise to the consensus signal and 
 
 Deep engines are opt-in twice: tick them in Preferences, and by default they only run when a
 fast engine failed or the merged set could not fill a page.
+
+## Security
+
+A public instance must have credentials: the process refuses to start on a non-loopback
+address without them, because every search spends the operator's API budget. Keys are
+encrypted at rest and write-only in the UI. Every response carries a CSP, and only
+`http(s)` URLs ever become links.
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md). The full pre-release
+review and what was changed in response are in `docs/SECURITY-REVIEW.md`.
 
 ## Configuration
 
@@ -200,6 +218,18 @@ python3 eval/combo_bench.py --fetch                            # engine-set comp
 Two rules, learned the hard way: never compare weightings against a live refetch (engine
 drift moves nDCG by 0.2 between identical runs), and never judge an engine with a harness
 that bypasses its rate limit — that measures your own burst rate.
+
+## Development
+
+```bash
+pip install -r requirements.txt pytest
+python -m pytest -q
+```
+
+The suite covers the parts where a regression is a security problem: the startup
+credential guard, URL scheme filtering, `?next=` handling, key encryption and its
+binding to a key name, cache-key completeness, session expiry and rate limiting. CI runs
+it on Python 3.10, 3.12 and 3.13.
 
 ## Licence
 

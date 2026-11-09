@@ -26,8 +26,39 @@ MAX_FAILURES = 10
 FAILURE_WINDOW = 15 * 60
 
 
+SECRET_FILE = os.path.expanduser(
+    os.environ.get("TRIVET_SESSION_SECRET_FILE", "~/.config/trivet/session-secret"))
+
+
 def session_secret() -> str:
-    return os.environ.get("TRIVET_SESSION_SECRET", "")
+    """The cookie signing secret.
+
+    Explicit configuration wins. Otherwise a secret is generated once and kept at
+    `~/.config/trivet/session-secret` (0600) so a first install works and sessions
+    survive a restart. The previous behaviour — empty secret, empty token, empty
+    cookie — produced a login that redirected in a loop with no error anywhere.
+    """
+    configured = os.environ.get("TRIVET_SESSION_SECRET", "").strip()
+    if configured:
+        return configured
+    try:
+        with open(SECRET_FILE) as fh:
+            existing = fh.read().strip()
+            if existing:
+                return existing
+    except OSError:
+        pass
+    generated = secrets.token_urlsafe(48)
+    try:
+        os.makedirs(os.path.dirname(SECRET_FILE), exist_ok=True)
+        fd = os.open(SECRET_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(generated)
+        print(f"WARNING: no TRIVET_SESSION_SECRET set; generated one at {SECRET_FILE}",
+              file=__import__("sys").stderr, flush=True)
+    except OSError:
+        pass
+    return generated
 
 
 def session_days() -> int:

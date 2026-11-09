@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.git/
+.venv/
+venv/
+*.db
+*.db-wal
+*.db-shm
+.env
+eval/snapshot*.json
+eval/combo-snapshot*.json
