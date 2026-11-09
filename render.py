@@ -45,21 +45,22 @@ a{color:var(--link);text-decoration:none}
 a:hover{text-decoration:underline}
 a:visited{color:var(--visited)}
 .wrap{max-width:760px;margin:0 auto;padding:0 20px}
-form.search{display:flex;gap:8px;align-items:center}
-form.search input[type=search]{flex:1;background:var(--field);border:1px solid var(--line);
-  color:var(--fg);padding:11px 14px;border-radius:24px;font-size:15px;outline:none;min-width:0}
+form.search{display:flex;align-items:center}
+form.search .sb{position:relative;display:flex;align-items:center;flex:1;min-width:0}
+form.search input[type=search]{flex:1;background:var(--field);
+  border:1px solid color-mix(in srgb,var(--fg) 15%,transparent);
+  color:var(--fg);padding:11px 44px 11px 16px;border-radius:24px;font-size:15px;
+  outline:none;min-width:0;transition:border-color .12s,box-shadow .12s}
 form.search input[type=search]:focus{border-color:var(--accent);
-  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
-form.search button{background:var(--accent);color:#fff;border:0;border-radius:24px;
-  padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;
-  display:inline-flex;align-items:center;justify-content:center;gap:6px}
-form.search .btn-icon{display:none;width:19px;height:19px}
-/* dark ink only when the accent is the light dark-mode blue; the default light
-   theme has a deep blue accent and needs white text */
-html[data-theme="dark"] form.search button,
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+form.search button{position:absolute;right:5px;width:34px;height:34px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:transparent;border:0;border-radius:50%;color:var(--muted);cursor:pointer}
+form.search button:hover,form.search button:focus-visible{color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent);outline:none}
+form.search .btn-icon{width:18px;height:18px}
 html[data-theme="dark"] .prefs button{color:#0b0d10}
 @media (prefers-color-scheme:dark){
-  html:not([data-theme="light"]) form.search button,
   html:not([data-theme="light"]) .prefs button{color:#0b0d10}
 }
 .brand{font-size:20px;font-weight:600;letter-spacing:-.02em;color:var(--fg);display:inline-flex;align-items:center;gap:7px;
@@ -77,10 +78,22 @@ header.top .nav a{color:var(--muted)}
 .home .brand{font-size:38px;display:block;margin-bottom:6px}
 .home .tag{color:var(--muted);font-size:14px;margin-bottom:26px}
 .home form.search{max-width:560px;margin:0 auto}
-.home .engines{margin-top:26px;font-size:13px;color:var(--muted);line-height:1.9;
-  display:block;text-align:center}
-.home .engines a{color:var(--muted);text-decoration:underline;text-decoration-color:var(--line)}
-.home .engines b{color:var(--fg);font-weight:600}
+.home .engines{margin-top:26px;display:flex;gap:7px;flex-wrap:wrap;
+  align-items:center;justify-content:center}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:99px;
+  font-size:11.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap;
+  color:hsl(var(--h) 62% 34%);background:hsl(var(--h) 68% 50% / .13);
+  border:1px solid hsl(var(--h) 55% 50% / .22)}
+.more{display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;border:1px solid var(--line);
+  color:var(--muted);font-size:13px;line-height:1;text-decoration:none;flex:0 0 auto}
+.more:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .pill{color:hsl(var(--h) 78% 74%);
+    background:hsl(var(--h) 60% 60% / .16);border-color:hsl(var(--h) 60% 60% / .28)}
+}
+html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
+  background:hsl(var(--h) 60% 60% / .16);border-color:hsl(var(--h) 60% 60% / .28)}
 .meta{display:flex;justify-content:space-between;gap:12px;color:var(--muted);
   font-size:13px;margin:16px 0 6px;flex-wrap:wrap}
 /* only the phrases inside the count line are unbreakable; the count line itself
@@ -149,14 +162,8 @@ footer a{color:var(--muted)}
   header.top .nav a{padding:6px 0}
   header.top form.search{order:3;flex:1 1 100%;width:100%}
   form.search input[type=search]{flex:1 1 100%;min-width:0;font-size:16px;
-    padding:11px 14px;border-radius:22px}
-  /* icon-only submit is for the header, where the query needs the width.
-     The login form reuses .search and must keep its label. */
-  header.top form.search button{flex:0 0 auto;width:46px;height:44px;padding:0;
-    border-radius:22px}
-  header.top form.search .btn-icon{display:block}
-  header.top form.search .btn-text{position:absolute;width:1px;height:1px;overflow:hidden;
-    clip-path:inset(50%);white-space:nowrap}
+    padding:11px 44px 11px 16px;border-radius:22px}
+  header.top form.search button{width:38px;height:38px}
   .meta{margin:12px 0 4px;font-size:12.5px;gap:4px}
   /* filters become two swipeable strips instead of four wrapped rows; chips keep
      a 36px touch height while the row stays one line tall */
@@ -263,29 +270,48 @@ addEventListener('keydown',e=>{{
 </script></body></html>"""
 
 
+# One hue per engine so the same name is always the same colour, in every theme.
+ENGINE_HUES = {
+    "keenable": 212, "exa": 268, "brave": 24, "tavily": 158,
+    "serper": 44, "linkup": 190, "firecrawl": 12, "valyu": 296,
+    "parallel": 232,
+}
+
+
+def _engine_pill(spec: Spec) -> str:
+    hue = ENGINE_HUES.get(spec.name, 215)
+    return (f'<span class="pill" style="--h:{hue}" title="{escape(spec.blurb)}">'
+            f'{escape(spec.label)}</span>')
+
+
 def _search_form(q: str) -> str:
+    # The submit stays a real button so Enter and keyboard users work with JS off;
+    # it is just drawn inside the field as a magnifier.
     return f"""<form class="search" action="/search" method="get" role="search">
-  <input type="search" name="q" value="{escape(q)}" placeholder="Search, or !bang a site"
-         autocomplete="off" spellcheck="false" aria-label="Search query">
-  <button type="submit" aria-label="Search">
-    <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"
-      fill="none" stroke="currentColor" stroke-width="2.2"/><line x1="16" y1="16" x2="21" y2="21"
-      stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-    <span class="btn-text">Search</span>
-  </button>
+  <div class="sb">
+    <input type="search" name="q" value="{escape(q)}" placeholder="Search, or !bang a site"
+           autocomplete="off" spellcheck="false" aria-label="Search query">
+    <button type="submit" aria-label="Search">
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"
+        fill="none" stroke="currentColor" stroke-width="2.2"/><line x1="16" y1="16" x2="21" y2="21"
+        stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </button>
+  </div>
 </form>"""
 
 
 def home(enabled: list[Spec], configured: list[Spec], theme: str = "") -> str:
-    names = " · ".join(escape(s.label) for s in enabled)
     off = len(configured) - len(enabled)
-    more = (f' · <a href="/preferences">{off} more available</a>' if off > 0 else "")
+    pills = " ".join(_engine_pill(s) for s in enabled)
+    more = (f'<a class="more" href="/preferences" title="{off} more available"'
+            f' aria-label="{off} more engines available">+</a>' if off > 0 else "")
+    engines_block = (f'<span class="pills">{pills}</span>{more}' if enabled else
+                     '<a href="/settings/keys">No engines yet. Add an API key</a>')
     body = f"""<div class="wrap"><div class="home">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
   <div class="tag">A search engine over agentic indexes.</div>
   {_search_form("")}
-  <div class="engines">{f'<b>{len(enabled)} engine{"" if len(enabled) == 1 else "s"}</b> · {names}{more}'
-    if enabled else '<b>No engines yet.</b> <a href="/settings/keys">Add an API key</a> to start searching.'}</div>
+  <div class="engines">{engines_block}</div>
   <footer style="justify-content:center;border:0;margin-top:26px">
     <a href="/preferences">Preferences</a><a href="/stats">Engine stats</a>
     <a href="/about">About</a>
@@ -496,17 +522,29 @@ def login(next_path: str = "/", error: str = "") -> str:
   <div class="tag">Sign in to search.</div>
   <form class="search login" method="post" action="/login" style="max-width:420px;margin:0 auto">
     <input type="hidden" name="next" value="{escape(next_path)}">
-    <input type="password" name="password" placeholder="Password" autofocus
-           autocomplete="current-password" aria-label="Password" required>
-    <button type="submit">Sign in</button>
+    <div class="sb">
+      <input type="password" name="password" placeholder="Password" autofocus
+             autocomplete="current-password" aria-label="Password" required>
+    </div>
+    <button type="submit" class="solid">Sign in</button>
   </form>
   {err}
   <p class="hint">Stays signed in on this browser for 90 days.</p>
 </div></div>"""
     extra = """
-.login input{background:var(--field);border:1px solid var(--line);color:var(--fg);
-  padding:11px 14px;border-radius:24px;font-size:16px;flex:1;min-width:0}
-.login button{flex:0 0 auto;white-space:nowrap;padding:11px 20px;border-radius:24px}
+.login .sb{flex:1}
+.login input{background:var(--field);border:1px solid color-mix(in srgb,var(--fg) 15%,transparent);
+  color:var(--fg);padding:11px 16px;border-radius:24px;font-size:16px;min-width:0;outline:none}
+.login input:focus{border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+.login button.solid{position:static;width:auto;height:auto;flex:0 0 auto;white-space:nowrap;
+  padding:11px 20px;border-radius:24px;background:var(--accent);color:#fff;
+  font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center}
+.login button.solid:hover{background:var(--accent);color:#fff;opacity:.92}
+html[data-theme="dark"] .login button.solid{color:#0b0d10}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .login button.solid{color:#0b0d10}
+}
 .home .err{color:var(--danger);font-size:13px;margin-top:14px}
 .home .hint{color:var(--muted);font-size:12px;margin-top:22px}
 """
