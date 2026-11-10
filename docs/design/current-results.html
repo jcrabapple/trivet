@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>best android browser · trivet</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="search" type="application/opensearchdescription+xml" title="trivet"
+      href="/opensearch.xml">
+<style>
+:root{
+  --bg:#fff; --fg:#1b1d21; --muted:#6b7280; --line:#e3e6ea; --field:#fff;
+  --link:#1a4fd6; --visited:#6b3fb5; --chip:#f3f5f8; --accent:#1a4fd6;
+  --danger:#b42318; --ok:#127a4b;
+}
+html[data-theme="dark"]{
+  --bg:#15171b; --fg:#e7e9ee; --muted:#9aa3b2; --line:#2a2f38; --field:#1d2027;
+  --link:#8ab4f8; --visited:#c0a8f0; --chip:#1f232b; --accent:#8ab4f8;
+  --danger:#ff9a9a; --ok:#6ee7a8;
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]){
+    --bg:#15171b; --fg:#e7e9ee; --muted:#9aa3b2; --line:#2a2f38; --field:#1d2027;
+    --link:#8ab4f8; --visited:#c0a8f0; --chip:#1f232b; --accent:#8ab4f8;
+    --danger:#ff9a9a; --ok:#6ee7a8;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+a:visited{color:var(--visited)}
+.wrap{max-width:760px;margin:0 auto;padding:0 20px}
+form.search{display:flex;align-items:center}
+form.search .sb{position:relative;display:flex;align-items:center;flex:1;min-width:0}
+form.search input[type=search]{flex:1;background:var(--field);
+  border:1px solid color-mix(in srgb,var(--fg) 15%,transparent);
+  color:var(--fg);padding:11px 44px 11px 16px;border-radius:24px;font-size:15px;
+  outline:none;min-width:0;transition:border-color .12s,box-shadow .12s}
+form.search input[type=search]:focus{border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+form.search button{position:absolute;right:5px;width:34px;height:34px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:transparent;border:0;border-radius:50%;color:var(--muted);cursor:pointer}
+form.search button:hover,form.search button:focus-visible{color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent);outline:none}
+form.search .btn-icon{width:18px;height:18px}
+html[data-theme="dark"] .prefs button{color:#0b0d10}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .prefs button{color:#0b0d10}
+}
+.brand{font-size:20px;font-weight:600;letter-spacing:-.02em;color:var(--fg);display:inline-flex;align-items:center;gap:7px;
+  font-family:ui-monospace,SFMono-Regular,Cascadia Mono,Roboto Mono,Liberation Mono,DejaVu Sans Mono,monospace}
+.brand .mk{width:1.05em;height:1.05em;fill:var(--accent);flex:0 0 auto}
+.brand:hover{text-decoration:none}
+.brand span{color:var(--accent)}
+.home .brand .mk{width:1em;height:1em}
+header.top{border-bottom:1px solid var(--line);padding:14px 0}
+header.top .inner{display:flex;gap:18px;align-items:center}
+header.top form.search{flex:1}
+header.top .nav{display:flex;gap:14px;font-size:13px;color:var(--muted);white-space:nowrap}
+header.top .nav a{color:var(--muted)}
+.home{padding:16vh 0 0;text-align:center}
+.home .brand{font-size:38px;display:block;margin-bottom:6px}
+.home .tag{color:var(--muted);font-size:14px;margin-bottom:26px}
+.home form.search{max-width:560px;margin:0 auto}
+.home .engines{margin-top:26px;display:flex;gap:7px;flex-wrap:wrap;
+  align-items:center;justify-content:center}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:99px;
+  font-size:11.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap;
+  color:hsl(var(--h) 62% 34%);background:hsl(var(--h) 68% 50% / .13);
+  border:1px solid hsl(var(--h) 55% 50% / .22)}
+.more{display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;border:1px solid var(--line);
+  color:var(--muted);font-size:13px;line-height:1;text-decoration:none;flex:0 0 auto}
+.more:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .pill{color:hsl(var(--h) 78% 74%);
+    background:hsl(var(--h) 60% 60% / .16);border-color:hsl(var(--h) 60% 60% / .28)}
+}
+html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
+  background:hsl(var(--h) 60% 60% / .16);border-color:hsl(var(--h) 60% 60% / .28)}
+.meta{display:flex;justify-content:space-between;gap:12px;color:var(--muted);
+  font-size:13px;margin:16px 0 6px;flex-wrap:wrap}
+/* only the phrases inside the count line are unbreakable; the count line itself
+   must wrap, or a 320px viewport overflows by its width */
+.meta .count span{white-space:nowrap}
+.meta .hit{color:var(--ok)}
+.meta .refresh{color:var(--muted);text-decoration:underline;
+  text-decoration-color:color-mix(in srgb,var(--muted) 55%,transparent);
+  text-underline-offset:2px;font-size:12px}
+.filters{display:flex;gap:0;align-items:center;flex-wrap:wrap;margin:10px 0 18px;
+  padding-bottom:12px;border-bottom:1px solid var(--line);font-size:13px}
+.fgroup{display:flex;align-items:center;gap:6px;margin-right:16px}
+.fgroup .strip{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.fgroup:last-child{margin-right:0}
+.filters .lbl{color:var(--fg);opacity:.55;margin-right:4px;font-size:12px;
+  text-transform:uppercase;letter-spacing:.04em}
+.filters a{padding:4px 10px;border-radius:14px;color:var(--muted);
+  border:1px solid transparent}
+.filters a:hover{background:var(--chip);text-decoration:none}
+.filters a.on{background:var(--chip);color:var(--fg);font-weight:600;
+  border-color:var(--line)}
+.filters .sep{width:1px;height:16px;background:var(--line);margin:0 8px}
+article.res{padding:14px 0 16px;border-bottom:1px solid var(--line)}
+article.res:last-of-type{border-bottom:0}
+.src{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);margin-bottom:3px;flex-wrap:wrap}
+.src .dom{color:var(--fg);font-weight:500}
+.src .engines{margin-top:0}
+article.res h2{margin:0 0 2px;font-size:18px;font-weight:600;line-height:1.35}
+article.res h2 a{color:var(--link)}
+article.res .url{color:var(--muted);font-size:12.5px;margin-bottom:6px;word-break:break-all}
+article.res p{margin:0;color:var(--fg);opacity:.92;font-size:14px}
+.engines{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.e{font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:10px;
+  padding:0 6px;line-height:1.6}
+.e.agree{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.flag{font-size:10.5px;border-radius:9px;padding:0 6px;line-height:1.6;
+  border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.flag[data-cat="malware"],.flag[data-cat="spam"]{color:var(--danger);
+  border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.flag[data-cat="ads"],.flag[data-cat="suspicious"]{color:#b45309;
+  border-color:color-mix(in srgb,#b45309 40%,transparent)}
+html[data-theme="dark"] .flag[data-cat="ads"],
+html[data-theme="dark"] .flag[data-cat="suspicious"]{color:#e0a458}
+.dupes{font-size:11.5px;color:var(--muted);margin-top:6px}
+.pages{display:flex;gap:6px;justify-content:center;margin:28px 0 10px;font-size:14px}
+.pages a,.pages span{padding:5px 11px;border-radius:6px;border:1px solid var(--line)}
+.pages .cur{background:var(--chip);font-weight:600}
+.errbox{border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin:14px 0;
+  font-size:12.5px;color:var(--muted)}
+.errbox b{color:var(--danger);font-weight:600}
+.none{padding:40px 0;color:var(--muted)}
+footer{border-top:1px solid var(--line);margin-top:34px;padding:16px 0 40px;
+  color:var(--muted);font-size:12.5px;display:flex;gap:16px;flex-wrap:wrap}
+footer a{color:var(--muted)}
+
+/* ---------------- phone layout ---------------- */
+@media (max-width: 640px){
+  .wrap{padding:0 14px}
+  /* header: brand + links on row 1, full-width search on row 2. The desktop
+     single row is 637px wide at a 390px viewport, which pushed the nav links
+     off-screen entirely. */
+  header.top{padding:10px 0 12px}
+  header.top .inner{flex-wrap:wrap;gap:8px 12px;align-items:center}
+  header.top .brand{order:1;font-size:18px}
+  header.top .nav{order:2;margin-left:auto;gap:18px;font-size:13px}
+  header.top .nav a{padding:6px 0}
+  header.top form.search{order:3;flex:1 1 100%;width:100%}
+  form.search input[type=search]{flex:1 1 100%;min-width:0;font-size:16px;
+    padding:11px 44px 11px 16px;border-radius:22px}
+  header.top form.search button{width:38px;height:38px}
+  .meta{margin:12px 0 4px;font-size:12.5px;gap:4px}
+  /* filters become two swipeable strips instead of four wrapped rows; chips keep
+     a 36px touch height while the row stays one line tall */
+  .filters{display:block;padding-bottom:10px;margin:6px 0 14px}
+  .fgroup{display:flex;align-items:center;gap:8px;margin:6px 0;width:100%}
+  .fgroup .lbl{flex:0 0 auto;margin:0;font-size:11px}
+  /* same specificity as the desktop rule above, and later in the file, so this
+     is what actually wins: one swipeable line instead of wrapped rows */
+  .fgroup .strip{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:1px 0;
+    flex:1 1 auto;min-width:0;
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent);
+    mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent)}
+  .fgroup .strip::-webkit-scrollbar{display:none}
+  .filters a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:36px;
+    padding:0 12px;font-size:13.5px}
+  article.res{padding:13px 0 15px}
+  article.res h2{font-size:17px;line-height:1.3}
+  article.res .url{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  article.res p{font-size:14px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+    overflow:hidden}
+  .src{font-size:12px}
+  .e{font-size:10px}
+  .pages{gap:8px;margin:22px 0 8px}
+  .pages a,.pages span{min-width:40px;min-height:40px;display:inline-flex;
+    align-items:center;justify-content:center;padding:0 10px}
+  .prefs{margin:20px auto 40px}
+  .prefs label{padding:9px 0;gap:10px}
+  .prefs select{font-size:16px}          /* iOS zooms any focused control under 16px */
+  .prefs button{width:100%;padding:14px 18px;font-size:15px;border-radius:10px}
+  .prefs .sub{font-size:11.5px}
+  footer{padding:14px 0 32px;gap:12px}
+}
+@media (prefers-reduced-motion: no-preference){
+  .strip{scroll-behavior:smooth}
+}
+
+.prefs{max-width:560px;margin:26px auto 60px}
+.prefs h1{font-size:20px;margin:0 0 18px}
+.prefs fieldset{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:0 0 16px}
+.prefs legend{padding:0 6px;font-size:13px;color:var(--muted)}
+.prefs label{display:flex;gap:9px;align-items:center;padding:5px 0;font-size:14px}
+.prefs .sub{font-size:12px;color:var(--muted);margin-left:auto}
+.prefs button{background:var(--accent);color:#fff;border:0;border-radius:8px;
+  padding:10px 18px;font-weight:600;cursor:pointer}
+html[data-theme="dark"] .prefs button{color:#0b0d10}
+.kbd{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;
+  padding:0 5px;margin-left:8px}
+</style></head>
+<body data-imp="xz3NGdseztmv"><header class="top"><div class="wrap inner">
+  <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
+  <form class="search" action="/search" method="get" role="search">
+  <div class="sb">
+    <input type="search" name="q" value="best android browser" placeholder="Search, or !bang a site"
+           autocomplete="off" spellcheck="false" aria-label="Search query">
+    <button type="submit" aria-label="Search">
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"
+        fill="none" stroke="currentColor" stroke-width="2.2"/><line x1="16" y1="16" x2="21" y2="21"
+        stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</form>
+  <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a><a href="/logout">Log out</a></div>
+</div></header>
+<div class="wrap">
+  <div class="meta"><span class="count"><span>About 30 results</span> · <span>1.89s</span> · <span>all 4 engines answered</span></span><span class="pager"><a class="refresh" href="/search?q=best+android+browser&amp;page=1&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10&amp;nocache=1" title="Search the engines again instead of using the cache">↻ refresh</a></span></div>
+  <div class="timings">Keenable <b>203ms</b> · Exa <b>1.9s</b> · Brave <b>700ms</b> · Google (Serper) <b>1.1s</b></div>
+  <p class="report"><a href="https://github.com/jcrabapple/trivet/issues/new?title=Search+results+problem%3A+best+android+browser&amp;body=%2A%2AQuery%3A%2A%2A+%60best+android+browser%60%0A%0A%2A%2AWhen%3A%2A%2A+2026-11-10T00%3A03%3A34%2B00%3A00%0A%2A%2ATrivet%3A%2A%2A+0.1.2%0A%2A%2AEngines%3A%2A%2A+Brave%2C+Exa%2C+Google+%28Serper%29%2C+Keenable%0A%2A%2ATimings%3A%2A%2A+Keenable+203ms+%C2%B7+Exa+1884ms+%C2%B7+Brave+700ms+%C2%B7+Google+%28Serper%29+1117ms%0A%2A%2AView%3A%2A%2A+page+1%2C+10+per+page%2C+any%2C+safesearch+moderate%0A%0A%23%23%23+What+went+wrong%3F%0A%0A%3C%21--+e.g.+%22the+answer+is+the+4th+result%22%2C+%22these+are+all+SEO+spam%22%2C+%22this+is+the+wrong+version%22+--%3E%0A%0A%23%23%23+Results%0A%0A%60%60%60json%0A%5B%7B%22pos%22%3A1%2C%22title%22%3A%225+Android+browsers+I+prefer+over+Chrome+-+and+why+they%27re+worth+trying+-+ZDNET%22%2C%22url%22%3A%22https%3A%2F%2Fwww.zdnet.com%2Farticle%2F5-android-browsers-that-are-better-than-chrome-and-why-i-prefer-them%2F%22%2C%22engines%22%3A%5B%22brave%22%2C%22serper%22%5D%2C%22score%22%3A0.032%7D%2C%7B%22pos%22%3A2%2C%22title%22%3A%22I+spent+60+days+testing+every+major+Android+browser%3B+one+easily+beat+the+rest%22%2C%22url%22%3A%22https%3A%2F%2Fwww.androidpolice.com%2Fi-spent-60-days-testing-major-android-browser-one-beat-the-rest%2F%22%2C%22engines%22%3A%5B%22exa%22%2C%22serper%22%5D%2C%22score%22%3A0.031%7D%2C%7B%22pos%22%3A3%2C%22title%22%3A%22The+best+Android+browser+isn%E2%80%99t+on+the+Play+Store.+Here%E2%80%99s+how+to+install+it%22%2C%22url%22%3A%22https%3A%2F%2Fandroidauthority.com%2Fsolipsism-browser-android-how-to-download-3731532%22%2C%22engines%22%3A%5B%22keenable%22%2C%22exa%22%5D%2C%22score%22%3A0.032%7D%2C%7B%22pos%22%3A4%2C%22title%22%3A%22I+tried+every+major+Android+browser%2C+and+the+one+I+kept+wasn%27t+Chrome%2C+Firefox%2C+or+Opera%22%2C%22url%22%3A%22https%3A%2F%2Fmakeuseof.com%2Fbrave-best-android-browser-not-chrome%22%2C%22engines%22%3A%5B%22keenable%22%2C%22exa%22%2C%22brave%22%2C%22serper%22%5D%2C%22score%22%3A0.06%7D%2C%7B%22pos%22%3A5%2C%22title%22%3A%22r%2Fbrowsers+on+Reddit%3A+Which+Android+browser+is+the+best%3F%22%2C%22url%22%3A%22https%3A%2F%2Fwww.reddit.com%2Fr%2Fbrowsers%2Fcomments%2F1ks70o0%2Fwhich_android_browser_is_the_best%2F%22%2C%22engines%22%3A%5B%22brave%22%2C%22serper%22%5D%2C%22score%22%3A0.033%7D%2C%7B%22pos%22%3A6%2C%22title%22%3A%22Hermit+%E2%80%94+Lite+Apps+Browser+-+Apps+on+Google+Play%22%2C%22url%22%3A%22https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fhl%3Den_US%26id%3Dcom.chimbori.hermitcrab%22%2C%22engines%22%3A%5B%22keenable%22%5D%2C%22score%22%3A0.015%7D%2C%7B%22pos%22%3A7%2C%22title%22%3A%22What%27s+the+best+android+browser+right+now+in+all+aspects+%3F%22%2C%22url%22%3A%22https%3A%2F%2Freddit.com%2Fr%2Fbrowsers%2Fcomments%2F1u16a0a%2Fwhats_the_best_android_browser_right_now_in_all%22%2C%22engines%22%3A%5B%22keenable%22%2C%22serper%22%5D%2C%22score%22%3A0.031%7D%2C%7B%22pos%22%3A8%2C%22title%22%3A%22Survey+shows+Google+Chrome+still+rules+Android%2C+but+not+by+much%22%2C%22url%22%3A%22https%3A%2F%2Fwww.androidauthority.com%2Fbest-android-browser-poll-results-3712363%2F%22%2C%22engines%22%3A%5B%22exa%22%5D%2C%22score%22%3A0.016%7D%2C%7B%22pos%22%3A9%2C%22title%22%3A%22Privacy+Respecting+Web+Browsers+for+Android+and+iOS%22%2C%22url%22%3A%22https%3A%2F%2Fprivacyguides.org%2Fen%2Fmobile-browsers%22%2C%22engines%22%3A%5B%22keenable%22%5D%2C%22score%22%3A0.016%7D%2C%7B%22pos%22%3A10%2C%22title%22%3A%22My+honest+review+of+Chrome%2C+Edge%2C+Vivaldi%2C+and+Brave+on+Android%22%2C%22url%22%3A%22https%3A%2F%2Fwww.androidpolice.com%2Ftried-chrome-edge-vivaldi-and-brave-for-month%2F%22%2C%22engines%22%3A%5B%22exa%22%5D%2C%22score%22%3A0.015%7D%5D%0A%60%60%60%0A%0A" target="_blank" rel="noopener">Problem with the results? Report it on GitHub!</a></p>
+  
+  <div class="filters"><div class="fgroup"><span class="lbl">Time</span><div class="strip"><a class="on" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10">Any time</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=day&amp;ss=moderate&amp;per=10">Past day</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=week&amp;ss=moderate&amp;per=10">Past week</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=month&amp;ss=moderate&amp;per=10">Past month</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=year&amp;ss=moderate&amp;per=10">Past year</a></div></div><div class="fgroup"><span class="lbl">Engines</span><div class="strip"><a class="on" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10" title="agent-first index">Keenable</a><a class="on" href="/search?q=best+android+browser&amp;engines=brave%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10" title="neural index with page text">Exa</a><a class="on" href="/search?q=best+android+browser&amp;engines=exa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10" title="independent crawl, own ranking">Brave</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper%2Cvalyu&amp;time=any&amp;ss=moderate&amp;per=10" title="full page content, reports cost">Valyu</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Cserper%2Ctavily&amp;time=any&amp;ss=moderate&amp;per=10" title="search tuned for RAG">Tavily</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable%2Clinkup%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10" title="EU-hosted">Linkup</a><a class="on" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Ckeenable&amp;time=any&amp;ss=moderate&amp;per=10" title="Google SERP reseller">Google (Serper)</a><a class="" href="/search?q=best+android+browser&amp;engines=brave%2Cexa%2Cfirecrawl%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10" title="crawl-and-extract index">Firecrawl</a></div></div></div>
+  <article class="res">
+  <div class="src"><span class="dom">zdnet.com</span> · 18 Feb 2026
+    <span class="engines"><span class="e agree">Brave</span><span class="e agree">Google (Serper)</span></span></div>
+  <h2><a href="https://www.zdnet.com/article/5-android-browsers-that-are-better-than-chrome-and-why-i-prefer-them/" rel="noopener" data-pos="1">5 Android browsers I prefer over Chrome - and why they&#x27;re worth trying - ZDNET</a></h2>
+  <div class="url">https://www.zdnet.com/article/5-android-browsers-that-are-better-than-chrome-and-why-i-prefer-them/</div>
+  <p>Also: Arc Search for Android is the Chrome replacement you’ve been looking for · Although Arc Search is not the most customizable browser on the list, it does give you the option to select your search provider (you can even add Perplexity…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">androidpolice.com</span> · 03 Sep 2026
+    <span class="engines"><span class="e agree">Exa</span><span class="e agree">Google (Serper)</span></span></div>
+  <h2><a href="https://www.androidpolice.com/i-spent-60-days-testing-major-android-browser-one-beat-the-rest/" rel="noopener" data-pos="2">I spent 60 days testing every major Android browser; one easily beat the rest</a></h2>
+  <div class="url">https://www.androidpolice.com/i-spent-60-days-testing-major-android-browser-one-beat-the-rest/</div>
+  <p>I spent 60 days testing every major Android browser; one easily beat the rest I spent 60 days testing every major Android browser; one easily beat the rest Lucas Gouveia / Android Police By Jade Bryan Jardinico Published Sep 3, 2026, 8:30…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">androidauthority.com</span> · 08 Nov 2026
+    <span class="engines"><span class="e agree">Keenable</span><span class="e agree">Exa</span></span></div>
+  <h2><a href="https://androidauthority.com/solipsism-browser-android-how-to-download-3731532" rel="noopener" data-pos="3">The best Android browser isn’t on the Play Store. Here’s how to install it</a></h2>
+  <div class="url">https://androidauthority.com/solipsism-browser-android-how-to-download-3731532</div>
+  <p>Solipsism Browser is an open-source, Chromium-based browser that’s a rare exception. I don’t blame you if you haven’t heard of it — it’s fairly new and isn’t available on the Play Store either. Here’s how to install it on your Android and…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">makeuseof.com</span> · 05 Jun 2026
+    <span class="engines"><span class="e agree">Keenable</span><span class="e agree">Exa</span><span class="e agree">Brave</span><span class="e agree">Google (Serper)</span></span></div>
+  <h2><a href="https://makeuseof.com/brave-best-android-browser-not-chrome" rel="noopener" data-pos="4">I tried every major Android browser, and the one I kept wasn&#x27;t Chrome, Firefox, or Opera</a></h2>
+  <div class="url">https://makeuseof.com/brave-best-android-browser-not-chrome</div>
+  <p>So I decided to give other Android browsers a try. Microsoft Edge wasn&#x27;t part of the test list, as I&#x27;d used it before, and it felt more like a PC browser on a phone. I started with Opera, then jumped to Firefox, and finally settled on the…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">reddit.com</span> · 21 May 2025
+    <span class="engines"><span class="e agree">Brave</span><span class="e agree">Google (Serper)</span></span></div>
+  <h2><a href="https://www.reddit.com/r/browsers/comments/1ks70o0/which_android_browser_is_the_best/" rel="noopener" data-pos="5">r/browsers on Reddit: Which Android browser is the best?</a></h2>
+  <div class="url">https://www.reddit.com/r/browsers/comments/1ks70o0/which_android_browser_is_the_best/</div>
+  <p>Firefox for PC works perfectly for me, however on Android it is giving me a lot of problems with pages that do not load certain elements and even pages that freeze and do not load. In fact, that&amp;x27;s why I found this thread to look for an…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">play.google.com</span>
+    <span class="engines"><span class="e">Keenable</span></span></div>
+  <h2><a href="https://play.google.com/store/apps/details?hl=en_US&amp;id=com.chimbori.hermitcrab" rel="noopener" data-pos="6">Hermit — Lite Apps Browser - Apps on Google Play</a></h2>
+  <div class="url">https://play.google.com/store/apps/details?hl=en_US&amp;id=com.chimbori.hermitcrab</div>
+  <p>SANDBOXES: MULTIPLE PROFILES / CONTAINERS Hermit is the only Android browser with Sandboxes: Isolated Containers with Multiple Profiles. • Sandboxes keep your Web browsing isolated in separate containers • Use multiple accounts, all active…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">reddit.com</span>
+    <span class="engines"><span class="e agree">Keenable</span><span class="e agree">Google (Serper)</span></span></div>
+  <h2><a href="https://reddit.com/r/browsers/comments/1u16a0a/whats_the_best_android_browser_right_now_in_all" rel="noopener" data-pos="7">What&#x27;s the best android browser right now in all aspects ?</a></h2>
+  <div class="url">https://reddit.com/r/browsers/comments/1u16a0a/whats_the_best_android_browser_right_now_in_all</div>
+  <p>My answer will probably make most people laugh. But for smartphones, one of the best browsers is the Russian Yandex browser. It has a video voice-over, there is a summary of the content of the video, it has a summary of the pages (you can…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">androidauthority.com</span> · 17 Sep 2026
+    <span class="engines"><span class="e">Exa</span></span></div>
+  <h2><a href="https://www.androidauthority.com/best-android-browser-poll-results-3712363/" rel="noopener" data-pos="8">Survey shows Google Chrome still rules Android, but not by much</a></h2>
+  <div class="url">https://www.androidauthority.com/best-android-browser-poll-results-3712363/</div>
+  <p>Survey shows Google Chrome still rules Android, but not by much Survey shows Chrome still rules Android, but another browser is breathing down its neck ...and it&#x27;s packed with features. By Andy Walker Sep 17, 2026 — 6:26 AM ET Pankil Shah…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">privacyguides.org</span>
+    <span class="engines"><span class="e">Keenable</span></span></div>
+  <h2><a href="https://privacyguides.org/en/mobile-browsers" rel="noopener" data-pos="9">Privacy Respecting Web Browsers for Android and iOS</a></h2>
+  <div class="url">https://privacyguides.org/en/mobile-browsers</div>
+  <p>Mobile Browsers Protects against the following threat(s): - Surveillance Capitalism These are our currently recommended mobile web browsers and configurations for standard/non-anonymous internet browsing. If you need to browse the internet…</p>
+  
+</article><article class="res">
+  <div class="src"><span class="dom">androidpolice.com</span> · 19 Sep 2025
+    <span class="engines"><span class="e">Exa</span></span></div>
+  <h2><a href="https://www.androidpolice.com/tried-chrome-edge-vivaldi-and-brave-for-month/" rel="noopener" data-pos="10">My honest review of Chrome, Edge, Vivaldi, and Brave on Android</a></h2>
+  <div class="url">https://www.androidpolice.com/tried-chrome-edge-vivaldi-and-brave-for-month/</div>
+  <p>My honest review of Chrome, Edge, Vivaldi, and Brave on Android My honest review of Chrome, Edge, Vivaldi, and Brave on Android Credit: Lucas Gouveia/Android Police | chayanuphol/Shutterstock By Parth Shah Published Sep 19, 2025, 9:14 AM…</p>
+  
+</article>
+  <div class="pages"><span class="cur">1</span><a href="/search?q=best+android+browser&amp;page=2&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10">2</a><a href="/search?q=best+android+browser&amp;page=3&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10">3</a><a href="/search?q=best+android+browser&amp;page=2&amp;engines=brave%2Cexa%2Ckeenable%2Cserper&amp;time=any&amp;ss=moderate&amp;per=10">Next</a></div>
+  <footer><span>trivet</span><span>8 engines available</span>
+    <span>RRF fusion</span><a href="/preferences">Preferences</a>
+    <a href="/stats">Engine stats</a></footer>
+</div>
+<script>
+// click beacon: send before navigation so the click is attributed to this
+// impression and position; capture phase runs before the anchor navigates
+const sendClick = (el) => {
+  const imp = document.body.dataset.imp;
+  if(!imp || !el || !el.dataset.pos) return;
+  const payload = JSON.stringify({impression_id: imp, position: +el.dataset.pos, url: el.href});
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon('/api/click', new Blob([payload], {type: 'application/json'}));
+  } else {
+    fetch('/api/click', {method:'POST', headers:{'Content-Type':'application/json'}, body:payload, keepalive:true});
+  }
+};
+const resultLink = (e) => (e.target.closest && e.target.closest('article.res h2 a'));
+document.addEventListener('click', e => sendClick(resultLink(e)), true);
+document.addEventListener('auxclick', e => sendClick(resultLink(e)), true);
+addEventListener('keydown',e=>{
+  if(e.key==='/'&&document.activeElement.tagName!=='INPUT'){
+    const i=document.querySelector('input[type=search]'); if(i){e.preventDefault();i.focus();i.select();}
+  }
+  if(e.key==='Escape'){const i=document.querySelector('input[type=search]'); if(i) i.blur();}
+});
+</script></body></html>

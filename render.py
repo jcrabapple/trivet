@@ -44,7 +44,7 @@ body{font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans
 a{color:var(--link);text-decoration:none}
 a:hover{text-decoration:underline}
 a:visited{color:var(--visited)}
-.wrap{max-width:760px;margin:0 auto;padding:0 20px}
+.wrap{max-width:860px;margin:0 auto;padding:0 18px}
 form.search{display:flex;align-items:center}
 form.search .sb{position:relative;display:flex;align-items:center;flex:1;min-width:0}
 form.search input[type=search]{flex:1;background:var(--field);
@@ -94,8 +94,36 @@ header.top .nav a{color:var(--muted)}
 }
 html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
   background:hsl(var(--h) 60% 60% / .16);border-color:hsl(var(--h) 60% 60% / .28)}
-.meta{display:flex;justify-content:space-between;gap:12px;color:var(--muted);
-  font-size:13px;margin:16px 0 6px;flex-wrap:wrap}
+.status{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+  color:var(--muted);font-size:12.5px;margin:14px 0 2px;flex-wrap:wrap}
+.status .count{color:var(--muted);white-space:nowrap;min-width:0;overflow:hidden;
+  text-overflow:ellipsis}
+.diag{margin:0;flex:0 0 auto}
+.diag summary{display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+  color:var(--muted);font-size:12.5px;list-style:none;white-space:nowrap;
+  min-height:26px;padding:0 2px;border-radius:6px}
+.diag summary:hover .dtxt,.diag summary:hover .plus{color:var(--fg)}
+.diag .dtxt{font-size:11.5px;letter-spacing:.01em}
+.diag summary::-webkit-details-marker{display:none}
+.diag summary:hover{color:var(--fg)}
+.diag .plus{display:inline-flex;align-items:center;justify-content:center;
+  width:17px;height:17px;border:1px solid color-mix(in srgb,var(--fg) 22%,transparent);
+  border-radius:50%;font-size:12px;line-height:1;color:var(--muted)}
+.diag summary:hover .plus{border-color:var(--accent)}
+.diag[open] .plus{background:var(--chip)}
+.diagbody{margin-top:8px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;
+  background:color-mix(in srgb,var(--chip) 60%,transparent);max-width:420px}
+.diagline{color:var(--muted);font-size:11.5px;margin-bottom:6px}
+.tgrid{display:grid;grid-template-columns:1fr auto;gap:3px 14px;font-size:12px;
+  font-variant-numeric:tabular-nums}
+.trow{display:contents}
+.tgrid b{color:var(--fg);font-weight:600}
+.tgrid .fail{color:var(--danger)}
+.tgrid .skip{color:var(--muted)}
+.tnote{grid-column:1 / -1;color:var(--muted);font-size:11px;margin-top:4px}
+.diaglinks{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px}
+.diaglinks a{color:var(--muted)}
+.diaglinks a:hover{color:var(--fg)}
 /* only the phrases inside the count line are unbreakable; the count line itself
    must wrap, or a 320px viewport overflows by its width */
 .meta .count span{white-space:nowrap}
@@ -103,10 +131,16 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 .meta .refresh{color:var(--muted);text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--muted) 55%,transparent);
   text-underline-offset:2px;font-size:12px}
-.filters{display:flex;gap:0;align-items:center;flex-wrap:wrap;margin:10px 0 18px;
-  padding-bottom:12px;border-bottom:1px solid var(--line);font-size:13px}
-.fgroup{display:flex;align-items:center;gap:6px;margin-right:16px}
-.fgroup .strip{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+/* one swipeable strip; the sticky fade is the affordance that there is more to the right */
+.filters{position:relative;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;display:flex;gap:0;align-items:center;
+  margin:8px 0 14px;padding-bottom:12px;border-bottom:1px solid var(--line);font-size:13px}
+.filters::-webkit-scrollbar{display:none}
+.filters::after{content:"";position:sticky;right:0;flex:0 0 30px;align-self:stretch;
+  margin-left:-30px;pointer-events:none;
+  background:linear-gradient(to right,color-mix(in srgb,var(--bg) 0%,transparent),var(--bg))}
+.fgroup{display:flex;align-items:center;gap:6px;margin-right:16px;flex:0 0 auto}
+.fgroup .strip{display:flex;flex-wrap:nowrap;gap:4px;align-items:center}
 .fgroup:last-child{margin-right:0}
 .filters .lbl{color:var(--fg);opacity:.55;margin-right:4px;font-size:12px;
   text-transform:uppercase;letter-spacing:.04em}
@@ -116,15 +150,16 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 .filters a.on{background:var(--chip);color:var(--fg);font-weight:600;
   border-color:var(--line)}
 .filters .sep{width:1px;height:16px;background:var(--line);margin:0 8px}
-article.res{padding:14px 0 16px;border-bottom:1px solid var(--line)}
+article.res{padding:17px 0 18px;border-bottom:1px solid var(--line)}
 article.res:last-of-type{border-bottom:0}
-.src{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);margin-bottom:3px;flex-wrap:wrap}
-.src .dom{color:var(--fg);font-weight:500}
-.src .engines{margin-top:0}
-article.res h2{margin:0 0 2px;font-size:18px;font-weight:600;line-height:1.35}
+.src{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted);margin-bottom:4px}
+.src .dom{color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.src .date{margin-left:auto;white-space:nowrap;font-variant-numeric:tabular-nums}
+article.res h2{margin:0 0 5px;font-size:20px;font-weight:600;line-height:1.28;letter-spacing:-.005em}
 article.res h2 a{color:var(--link)}
-article.res .url{color:var(--muted);font-size:12.5px;margin-bottom:6px;word-break:break-all}
-article.res p{margin:0;color:var(--fg);opacity:.92;font-size:14px}
+article.res p{margin:0;color:var(--fg);opacity:.9;font-size:14.5px;line-height:1.55;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.prov{color:var(--muted);font-size:11.5px;margin-top:5px}
 .engines{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;align-items:center}
 .e{font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:10px;
   padding:0 6px;line-height:1.6}
@@ -138,9 +173,20 @@ article.res p{margin:0;color:var(--fg);opacity:.92;font-size:14px}
 html[data-theme="dark"] .flag[data-cat="ads"],
 html[data-theme="dark"] .flag[data-cat="suspicious"]{color:#e0a458}
 .dupes{font-size:11.5px;color:var(--muted);margin-top:6px}
-.pages{display:flex;gap:6px;justify-content:center;margin:28px 0 10px;font-size:14px}
-.pages a,.pages span{padding:5px 11px;border-radius:6px;border:1px solid var(--line)}
-.pages .cur{background:var(--chip);font-weight:600}
+.pages{display:flex;gap:10px;justify-content:space-between;align-items:center;
+  margin:26px 0 12px;font-size:14px}
+.pages a,.pages span{padding:8px 14px;border-radius:8px;border:1px solid var(--line)}
+.pages .cur{background:var(--chip);font-weight:600;border-color:transparent}
+.pages .nums{display:flex;gap:6px;flex:1;justify-content:center}
+.pages .pos{display:none;flex:1;text-align:center;color:var(--muted)}
+.pages .side.gap{visibility:hidden}
+@media (max-width:480px){
+  .pages .nums{display:none}
+  .pages .pos{display:block}
+  .pages a.side,.pages span.side{min-height:44px;min-width:44px}
+}
+.pages .side{display:inline-flex;align-items:center;min-height:40px;min-width:40px;
+  justify-content:center}
 .errbox{border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin:14px 0;
   font-size:12.5px;color:var(--muted)}
 .errbox b{color:var(--danger);font-weight:600}
@@ -164,26 +210,21 @@ footer a{color:var(--muted)}
   form.search input[type=search]{flex:1 1 100%;min-width:0;font-size:16px;
     padding:11px 44px 11px 16px;border-radius:22px}
   header.top form.search button{width:38px;height:38px}
-  .meta{margin:12px 0 4px;font-size:12.5px;gap:4px}
-  /* filters become two swipeable strips instead of four wrapped rows; chips keep
-     a 36px touch height while the row stays one line tall */
-  .filters{display:block;padding-bottom:10px;margin:6px 0 14px}
-  .fgroup{display:flex;align-items:center;gap:8px;margin:6px 0;width:100%}
-  .fgroup .lbl{flex:0 0 auto;margin:0;font-size:11px}
-  /* same specificity as the desktop rule above, and later in the file, so this
-     is what actually wins: one swipeable line instead of wrapped rows */
-  .fgroup .strip{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:1px 0;
-    flex:1 1 auto;min-width:0;
-    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent);
-    mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent)}
-  .fgroup .strip::-webkit-scrollbar{display:none}
-  .filters a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:36px;
-    padding:0 12px;font-size:13.5px}
-  article.res{padding:13px 0 15px}
-  article.res h2{font-size:17px;line-height:1.3}
-  article.res .url{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  article.res p{font-size:14px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  .status{margin:10px 0 0;font-size:12px;gap:8px;flex-wrap:nowrap}
+  .diag summary{font-size:12px;gap:5px}
+  /* the word costs the count its space on a phone; the + still opens the panel */
+  .diag .dtxt{display:none}
+  /* one strip for both filter groups: the container scrolls, so the two groups
+     stay on the same line instead of each taking a row of its own */
+  .filters{margin:6px 0 12px;padding-bottom:4px}
+  .fgroup{margin-right:12px;gap:5px}
+  .fgroup .lbl{flex:0 0 auto;margin:0;font-size:10.5px}
+  .fgroup .strip{overflow:visible;flex:0 0 auto}
+  .filters a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:34px;
+    padding:0 11px;font-size:13px}
+  article.res{padding:15px 0 16px}
+  article.res h2{font-size:18px;line-height:1.3}
+  article.res p{font-size:14px;
     overflow:hidden}
   .src{font-size:12px}
   .e{font-size:10px}
@@ -372,21 +413,20 @@ def _result(hit: MergedHit, engines: dict[str, Spec], position: int = 0,
     date = f' · {escape(_fmt_date(hit.published))}' if hit.published else ""
     # stable badge order (Spec order), so the same page always renders the same way
     order = {s.name: i for i, s in enumerate(engines.values())}
-    badges = "".join(
-        f'<span class="e{" agree" if hit.agreement > 1 else ""}">'
-        f'{escape(engines[e].label)}</span>'
-        for e in sorted(hit.engines, key=lambda n: order.get(n, 99)) if e in engines)
+    names = [engines[e].label for e in sorted(hit.engines, key=lambda n: order.get(n, 99))
+             if e in engines]
+    provenance = (f'<div class="prov">Found by {escape(" · ".join(names))}</div>'
+                  if names else "")
     # Same page, different query string: that is a URL variant, not a reprint, and
     # saying otherwise reads as a broken duplicate to a human.
     dupe = ""
     if len(hit.duplicates) >= 2:
         dupe = f'<div class="dupes">{len(hit.duplicates) + 1} URLs merged</div>' 
     return f"""<article class="res">
-  <div class="src"><span class="dom">{escape(hit.domain)}</span>{date}{_flag(rep)}
-    <span class="engines">{badges}</span></div>
+  <div class="src"><span class="dom">{escape(hit.domain)}</span><span class="date">{date}</span>{_flag(rep)}</div>
   <h2><a href="{escape(_safe_href(hit.url))}" rel="noopener"{' target="_blank"' if new_tab else ''} data-pos="{position}">{escape(hit.title)}</a></h2>
-  <div class="url">{escape(hit.url)}</div>
   {f'<p>{escape(hit.snippet)}</p>' if hit.snippet else ''}
+  {provenance}
   {dupe}
 </article>"""
 
@@ -418,8 +458,8 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
     else:
         age = "just now" if cached_age < 10 else f"{_human_age(cached_age)} ago"
         timing = f'<span class="hit">cached {age}</span>' 
-    count_line = (f'<span>About {total_unique:,} results</span> · '
-                  f'{timing} · <span>{answered}</span>')
+    count_plain = f"{total_unique:,} results"
+    answer_hint = answered
 
     pager_bits = []
     if page > 1:
@@ -439,17 +479,26 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                      f'Try fewer words or a wider time range.</div>')
 
     # pagination
-    pages = []
+    # three parts: previous, the number strip, next. Phones drop the strip and keep
+    # the position plus Next, which is the only control you actually press there.
+    prev_link = next_link = ""
+    nums: list[str] = []
     if hits or page > 1:
         if page > 1:
-            pages.append(f'<a href="{escape(_page_url(q, page - 1, engines_on, time_range, ss, per))}">Previous</a>')
+            prev_link = (f'<a class="side" rel="prev" href="'
+                         f'{escape(_page_url(q, page - 1, engines_on, time_range, ss, per))}">← Previous</a>')
         for p in range(max(1, page - 2), page + 3):
             if p == page:
-                pages.append(f'<span class="cur">{p}</span>')
+                nums.append(f'<span class="cur">{p}</span>')
             elif p == 1 or p <= page + 2:
-                pages.append(f'<a href="{escape(_page_url(q, p, engines_on, time_range, ss, per))}">{p}</a>')
+                nums.append(f'<a href="{escape(_page_url(q, p, engines_on, time_range, ss, per))}">{p}</a>')
         if len(hits) == per:
-            pages.append(f'<a href="{escape(_page_url(q, page + 1, engines_on, time_range, ss, per))}">Next</a>')
+            next_link = (f'<a class="side" rel="next" href="'
+                         f'{escape(_page_url(q, page + 1, engines_on, time_range, ss, per))}">Next →</a>')
+    pages = ([prev_link or '<span class="side gap"></span>'],
+             [f'<span class="nums">{"".join(nums)}</span>',
+              f'<span class="pos">page {page}</span>'],
+             [next_link or '<span class="side gap"></span>'])
 
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
@@ -457,15 +506,24 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a><a href="/logout">Log out</a></div>
 </div></header>
 <div class="wrap">
-  <div class="meta"><span class="count">{count_line}</span>{pager_html}</div>
-  {_timings_line(results, cached_age, {s.name: s.label for s in all_engines})}
-  {_report_line(q, hits, page=page, per=per, results=results, engines_on=engines_on,
-                time_range=time_range, ss=ss, cached_age=cached_age,
-                labels={s.name: s.label for s in all_engines})}
+  <div class="status">
+    <span class="count">{count_plain}</span>
+    <details class="diag">
+      <summary aria-label="Search details: {answer_hint}">{timing}<span class="dtxt">details</span><span class="plus" aria-hidden="true">+</span></summary>
+      <div class="diagbody">
+        <div class="diagline">{answered}</div>
+        {_timings_grid(results, cached_age, {s.name: s.label for s in all_engines})}
+        <div class="diaglinks">{pager_html}
+          {_report_link(q, hits, page=page, per=per, results=results, engines_on=engines_on,
+                        time_range=time_range, ss=ss, cached_age=cached_age,
+                        labels={s.name: s.label for s in all_engines})}</div>
+      </div>
+    </details>
+  </div>
   {fail_box}
   {_filters(q, engines_on, all_engines, time_range, ss, per)}
   {body_hits}
-  <div class="pages">{''.join(pages)}</div>
+  <nav class="pages" aria-label="Result pages">{''.join(pages[0] + pages[1] + pages[2])}</nav>
   <footer><span>trivet</span><span>{len(all_engines)} engines available</span>
     <span>RRF fusion</span><a href="/preferences">Preferences</a>
     <a href="/stats">Engine stats</a></footer>
@@ -610,10 +668,90 @@ def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
     return f"{base}?{urlencode({'title': title, 'body': body})}"
 
 
-def _report_line(q: str, hits: list, **kw) -> str:
+def _report_link(q: str, hits: list, **kw) -> str:
     url = _issue_url(q, hits, **kw)
-    return (f'<p class="report"><a href="{escape(url)}" target="_blank" rel="noopener">'
-            f'Problem with the results? Report it on GitHub!</a></p>')
+    return (f'<a class="report" href="{escape(url)}" target="_blank" rel="noopener">'
+            f'Report a problem with these results</a>')
+
+
+def _timings_grid(results: list, cached_age: float | None,
+                  labels: dict[str, str] | None = None) -> str:
+    """Per-engine latency, shown inside the status disclosure rather than as a strip."""
+    if not results:
+        return ""
+    rows = []
+    for r in results:
+        label = (labels or {}).get(r.name, r.name)
+        if getattr(r, "skipped", False):
+            value = '<span class="skip">skipped</span>'
+        elif r.ok:
+            ms = r.ms
+            value = f'<b>{ms}ms</b>' if ms < 1000 else f'<b>{ms / 1000:.1f}s</b>'
+        else:
+            value = f'<span class="fail">{escape(r.error or "failed")}</span>'
+        rows.append(f'<div class="trow"><span>{escape(label)}</span>{value}</div>')
+    note = "timings from the original fetch" if cached_age is not None else ""
+    return ('<div class="tgrid">' + "".join(rows) +
+            (f'<div class="tnote">{note}</div>' if note else "") + "</div>")
+
+
+def _report_json(hits: list, limit: int) -> str:
+    rows = []
+    for i, h in enumerate(hits[:limit], start=1):
+        rows.append({
+            "pos": i,
+            "title": (h.title or "")[:120],
+            "url": (h.url or "")[:220],
+            "engines": list(h.engines or []),
+            "score": round(float(getattr(h, "score", 0.0) or 0.0), 3),
+        })
+    return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+
+
+def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
+               engines_on: set[str], time_range: str, ss: str,
+               cached_age: float | None = None, repo: str | None = None,
+               labels: dict[str, str] | None = None) -> str:
+    """Prefilled GitHub issue: the query plus a JSON dump of what was shown.
+
+    A URL has a practical length limit, so the dump shrinks (10 → 6 → 3 → 1 results)
+    until it fits, and says so when it was cut. The query always survives.
+    """
+    repo = repo or REPO
+    base = f"https://github.com/{repo}/issues/new"
+    title = f"Search results problem: {q[:110]}"
+    label = labels or {}
+    engines = ", ".join(sorted(label.get(e, e) for e in engines_on)) or "none"
+    timings = " · ".join(
+        f"{label.get(r.name, r.name)}{'' if r.ok else ' (failed)'} {r.ms}ms"
+        for r in results) or "n/a"
+    view = (f"page {page}, {per} per page, {time_range}, safesearch {ss}"
+            + (f", served from cache ({int(cached_age)}s old)" if cached_age else ""))
+    header = (
+        f"**Query:** `{q}`\n\n"
+        f"**When:** {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+        f"**Trivet:** {VERSION}\n"
+        f"**Engines:** {engines}\n"
+        f"**Timings:** {timings}\n"
+        f"**View:** {view}\n\n"
+        "### What went wrong?\n\n"
+        "<!-- e.g. \"the answer is the 4th result\", \"these are all SEO spam\", "
+        "\"this is the wrong version\" -->\n")
+    for limit in (10, 6, 3, 1):
+        cut = f"\n_(cut to {limit} of {len(hits)} results to fit in a URL)_" if len(hits) > limit else ""
+        body = f"{header}\n### Results\n\n```json\n{_report_json(hits, limit)}\n```\n{cut}\n"
+        url = f"{base}?{urlencode({'title': title, 'body': body})}"
+        if len(url) <= ISSUE_URL_LIMIT:
+            return url
+    # even one result did not fit: keep the context, drop the dump
+    body = header + "\n### Results\n\n_(too long to fit in a link - paste them here)_\n"
+    return f"{base}?{urlencode({'title': title, 'body': body})}"
+
+
+def _report_link(q: str, hits: list, **kw) -> str:
+    url = _issue_url(q, hits, **kw)
+    return (f'<a class="report" href="{escape(url)}" target="_blank" rel="noopener">'
+            f'Report a problem with these results</a>')
 
 
 def _timings_line(results: list, cached_age: float | None,
