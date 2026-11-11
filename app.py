@@ -34,6 +34,7 @@ import ranking
 import reputation
 import smallweb
 import stats
+import suggest
 import render
 import secrets_store
 import thumb_proxy
@@ -175,6 +176,16 @@ def _cookie(request: Request, name: str, default: str = "") -> str:
     return request.cookies.get(f"tv_{name}") or request.cookies.get(f"ms_{name}", default)
 
 
+def _serper_available() -> bool:
+    """Autocomplete has a hard provider dependency, independent of search selection."""
+    return any(s.name == "serper" for s in ENGINES)
+
+
+def _suggest_enabled(request: Request) -> bool:
+    # On by default only where it can work; an explicit preference always wins.
+    return _serper_available() and _cookie(request, "suggest", "1") == "1"
+
+
 _TRUSTED_PROXIES = {"127.0.0.1", "::1"}
 
 
@@ -199,11 +210,11 @@ _RECENT: dict[str, list[float]] = {}
 RATE_LIMIT, RATE_WINDOW = 40, 60.0
 
 
-def _rate_ok(bucket: str) -> bool:
+def _rate_ok(bucket: str, limit: int = RATE_LIMIT) -> bool:
     now = time.time()
     hits = _RECENT.get(bucket, [])
     hits = [t for t in hits if now - t < RATE_WINDOW]
-    if len(hits) >= RATE_LIMIT:
+    if len(hits) >= limit:
         _RECENT[bucket] = hits
         return False
     hits.append(now)
@@ -481,7 +492,8 @@ async def logout() -> Response:
 async def index(request: Request) -> HTMLResponse:
     chosen = set(_pick_engines(request, None))
     return HTMLResponse(render.home([s for s in ENGINES if s.name in chosen],
-                                    ENGINES, _cookie(request, "theme")))
+                                    ENGINES, _cookie(request, "theme"),
+                                    suggest=_suggest_enabled(request)))
 
 
 @app.get("/search", response_class=HTMLResponse)
@@ -512,7 +524,8 @@ async def search_page(
     if not q:
         web_chosen = set(_pick_engines(request, None, pool=ENGINES))
         return HTMLResponse(render.home([s for s in ENGINES if s.name in web_chosen],
-                                        ENGINES, theme))
+                                        ENGINES, theme,
+                                        suggest=_suggest_enabled(request)))
 
     bang = bangs.resolve(q)
     if bang:
@@ -536,7 +549,7 @@ async def search_page(
         time_range=time_range, ss=ss_cur, theme=theme,
         cached_age=data["cached_age"], impression_id=impression_id,
         reps=data.get("reps"), new_tab=_cookie(request, "newtab") == "1",
-        mode=mode))
+        mode=mode, suggest=_suggest_enabled(request)))
 
 
 @app.get("/img")
@@ -593,6 +606,10 @@ async def preferences(request: Request) -> Response:
         # a checkbox that is unchecked never reaches the query string
         resp.set_cookie("tv_newtab", "1" if params.get("newtab") else "0",
                         max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+        # A forged query string cannot enable a provider whose key is absent.
+        suggest_on = params.get("suggest") == "1" and _serper_available()
+        resp.set_cookie("tv_suggest", "1" if suggest_on else "0",
+                        max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
         # "auto" keeps a 6s deep engine off the critical path unless the fast tier
         # cannot fill a page; "always" is the old behaviour, for when you want it
         resp.set_cookie("tv_deep", "always" if params.get("deep") == "always" else "auto",
@@ -604,7 +621,9 @@ async def preferences(request: Request) -> Response:
                                            _cookie(request, "theme"),
                                            ss_cur, per_cur, q,
                                            _cookie(request, "newtab") == "1",
-                                           _cookie(request, "deep", "auto")))
+                                           _cookie(request, "deep", "auto"),
+                                           serper_available=_serper_available(),
+                                           suggest=_suggest_enabled(request)))
 
 
 @app.get("/settings/keys", response_class=HTMLResponse)
@@ -619,7 +638,8 @@ async def keys_get(request: Request, saved: str | None = Query(None),
     # an unkeyed engine becomes available
     return HTMLResponse(render.keys_page(
         SPECS, secrets_store.status(), secrets_store.available(),
-        _csrf(request), message, _cookie(request, "theme")))
+        _csrf(request), message, _cookie(request, "theme"),
+        suggest=_suggest_enabled(request)))
 
 
 @app.post("/settings/keys")
@@ -659,15 +679,17 @@ async def keys_post(request: Request) -> Response:
 
 
 @app.get("/stats", response_class=HTMLResponse)
-async def stats_page(hours: int = Query(24)) -> HTMLResponse:
+async def stats_page(request: Request, hours: int = Query(24)) -> HTMLResponse:
     hours = 168 if hours > 24 else 24
     return HTMLResponse(render.stats_page(
-        stats.summary(hours), hours, {s.name: s.label for s in ENGINES}))
+        stats.summary(hours), hours, {s.name: s.label for s in ENGINES},
+        suggest=_suggest_enabled(request)))
 
 
 @app.get("/about", response_class=HTMLResponse)
 async def about(request: Request) -> HTMLResponse:
-    return HTMLResponse(render.about(ENGINES, _cookie(request, "theme")))
+    return HTMLResponse(render.about(ENGINES, _cookie(request, "theme"),
+                                     suggest=_suggest_enabled(request)))
 
 
 @app.get("/opensearch.xml")
@@ -728,6 +750,31 @@ async def api_click(request: Request) -> JSONResponse:
     if not iid or pos < 1 or not url.startswith("http"):
         return JSONResponse({"ok": False, "error": "bad payload"}, status_code=400)
     return JSONResponse({"ok": feedback.log_click(iid, pos, url)})
+
+
+@app.get("/api/suggest")
+async def api_suggest(request: Request,
+                      q: str = Query("", max_length=200)) -> JSONResponse:
+    """Same-origin, preference-gated proxy for Serper query completions."""
+    if not _suggest_enabled(request):
+        return JSONResponse({"ok": False, "error": "autosuggest requires Serper and the preference"},
+                            status_code=403)
+    query = suggest.normalize(q)
+    if len(query) < 2 or query.startswith("!"):
+        return JSONResponse({"query": query, "suggestions": []},
+                            headers={"Cache-Control": "private, max-age=60"})
+    bucket = "suggest:" + (_session(request) or _client_ip(request))
+    if not _rate_ok(bucket, limit=60):
+        return JSONResponse({"ok": False, "error": "rate limited"},
+                            status_code=429, headers={"Retry-After": "60"})
+    try:
+        values = await suggest.get(CLIENT, query, ENV.get("SERPER_API_KEY", ""))
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        # A suggestion is optional enhancement; never turn it into a failed search.
+        return JSONResponse({"query": query, "suggestions": []},
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse({"query": query, "suggestions": values},
+                        headers={"Cache-Control": "private, max-age=60"})
 
 
 @app.get("/healthz")

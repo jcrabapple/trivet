@@ -573,3 +573,134 @@ def test_vendor_blogs_are_topic_gated_and_short_tokens_require_word_boundaries(e
                                           terms=ranking.query_terms("best vpn for android"),
                                           intent="tech", choice=True)
     assert seo_vpn == 0.0
+
+
+# ------------------------------------------------------------------ autosuggest
+def test_serper_suggestions_are_clean_deduplicated_limited_and_cached(env):
+    import asyncio
+    import httpx
+    suggest = _fresh("suggest")
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        assert request.headers["X-API-KEY"] == "test-serper-key"
+        return httpx.Response(200, json={"suggestions": [
+            {"value": "fastapi back"},
+            {"value": "  fastapi   background tasks  "},
+            {"value": "fastapi background tasks"},
+            {"value": "fastapi backend"},
+            {"value": "fastapi background task vs celery"},
+            {"value": "fastapi backend structure"},
+            {"value": "fastapi async background"},
+            {"value": "fastapi background worker"},
+            {"value": "fastapi background asyncio"},
+            {"value": "fastapi extra suggestion"},
+            {"value": 42}, "junk",
+        ]})
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            first = await suggest.get(client, "  fastapi   back ", "test-serper-key")
+            second = await suggest.get(client, "FASTAPI BACK", "test-serper-key")
+            return first, second
+
+    first, second = asyncio.run(exercise())
+    assert first == second
+    assert first[0] == "fastapi background tasks"
+    assert len(first) == 8
+    assert calls == 1                         # normalized, case-folded cache hit
+
+
+def test_serper_suggestion_failures_are_not_cached(env):
+    import asyncio
+    import httpx
+    suggest = _fresh("suggest")
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, json={"message": "temporary"})
+        return httpx.Response(200, json={"suggestions": [{"value": "fastapi background"}]})
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await suggest.get(client, "fastapi", "test-serper-key")
+            return await suggest.get(client, "fastapi", "test-serper-key")
+
+    assert asyncio.run(exercise()) == ["fastapi background"]
+    assert calls == 2
+
+
+def test_autosuggest_markup_is_progressive_and_preference_requires_serper(env):
+    render = _fresh("render")
+    enabled = render._search_form("fastapi", suggest=True)
+    disabled = render._search_form("fastapi", suggest=False)
+    assert 'data-suggest="1"' in enabled
+    assert 'role="combobox"' in enabled
+    assert 'aria-controls="query-suggestions"' in enabled
+    assert 'role="listbox"' in enabled
+    assert 'data-suggest=' not in disabled
+    assert 'role="combobox"' not in disabled
+    assert '<button type="submit" aria-label="Search">' in disabled
+
+    no_key = render.preferences([], set(), "", "moderate", 10,
+                                serper_available=False, suggest=True)
+    keyed = render.preferences([], set(), "", "moderate", 10,
+                               serper_available=True, suggest=True)
+    assert 'name="suggest" value="1" disabled' in no_key
+    assert "requires the Serper API key" in no_key
+    assert 'name="suggest" value="1" checked' in keyed
+    assert "Google (Serper)" in keyed
+
+
+def test_suggest_route_enforces_key_preference_and_returns_json(env, monkeypatch):
+    import base64
+    from fastapi.testclient import TestClient
+    app_mod = _fresh("app")
+    app_mod._RECENT.clear()
+    client = TestClient(app_mod.app)
+    headers = {"Authorization": "Basic " + base64.b64encode(b"admin:hunter2").decode()}
+
+    app_mod.ENGINES = []
+    assert client.get("/api/suggest?q=fa", headers=headers).status_code == 403
+
+    app_mod.ENGINES = [app_mod.BY_NAME["serper"]]
+    app_mod.ENV = {"SERPER_API_KEY": "test-serper-key"}
+
+    async def fake_get(client, query, api_key):
+        assert query == "fastapi back"
+        assert api_key == "test-serper-key"
+        return ["fastapi background tasks", "fastapi backend"]
+
+    monkeypatch.setattr(app_mod.suggest, "get", fake_get)
+    good = client.get("/api/suggest?q=fastapi%20back", headers=headers)
+    assert good.status_code == 200
+    assert good.json()["suggestions"] == ["fastapi background tasks", "fastapi backend"]
+    assert good.headers["cache-control"] == "private, max-age=60"
+
+    client.cookies.set("tv_suggest", "0")
+    assert client.get("/api/suggest?q=fastapi", headers=headers).status_code == 403
+
+
+def test_preference_save_cannot_enable_suggest_without_serper(env):
+    import base64
+    from fastapi.testclient import TestClient
+    app_mod = _fresh("app")
+    client = TestClient(app_mod.app)
+    headers = {"Authorization": "Basic " + base64.b64encode(b"admin:hunter2").decode()}
+
+    app_mod.ENGINES = []
+    saved = client.get("/preferences?save=1&suggest=1", headers=headers,
+                       follow_redirects=False)
+    assert saved.status_code == 303
+    assert saved.cookies["tv_suggest"] == "0"
+
+    app_mod.ENGINES = [app_mod.BY_NAME["serper"]]
+    saved = client.get("/preferences?save=1&suggest=1", headers=headers,
+                       follow_redirects=False)
+    assert saved.cookies["tv_suggest"] == "1"

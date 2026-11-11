@@ -61,6 +61,17 @@ form.search button{position:absolute;right:5px;width:34px;height:34px;padding:0;
 form.search button:hover,form.search button:focus-visible{color:var(--accent);
   background:color-mix(in srgb,var(--accent) 10%,transparent);outline:none}
 form.search .btn-icon{width:18px;height:18px}
+form.search .suggestions{position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:80;
+  max-height:min(360px,60vh);overflow-y:auto;padding:6px;background:var(--field);
+  border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.18);
+  text-align:left;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+form.search .suggestions[hidden]{display:none}
+form.search .suggestion{display:flex;align-items:center;min-height:40px;padding:8px 12px;
+  border-radius:9px;color:var(--fg);font-size:14px;line-height:1.4;cursor:pointer;
+  overflow-wrap:anywhere}
+form.search .suggestion:hover,form.search .suggestion.active{
+  background:color-mix(in srgb,var(--accent) 11%,transparent)}
+form.search .suggestion.active{box-shadow:inset 2px 0 0 var(--accent)}
 html[data-theme="dark"] .prefs button{color:#0b0d10}
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]) .prefs button{color:#0b0d10}
@@ -314,6 +325,143 @@ def _fmt_date(raw: str | None) -> str:
     return text
 
 
+AUTOSUGGEST_JS = r"""
+(() => {
+  for (const form of document.querySelectorAll('form.search[data-suggest="1"]')) {
+    const input = form.querySelector('input[type="search"]');
+    const popup = form.querySelector('.suggestions');
+    if (!input || !popup) continue;
+    let values = [], active = -1, typed = input.value, timer = 0, ticket = 0, controller = null;
+
+    const cancel = () => {
+      clearTimeout(timer);
+      ticket++;
+      if (controller) controller.abort();
+      controller = null;
+    };
+    const close = () => {
+      popup.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+      active = -1;
+    };
+    const show = () => {
+      const bounds = input.getBoundingClientRect();
+      const available = window.innerHeight - bounds.bottom - 23;
+      popup.style.maxHeight = `${Math.max(96, Math.min(360, available))}px`;
+      popup.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    };
+    const setActive = (index) => {
+      if (!values.length) return;
+      active = (index + values.length) % values.length;
+      const options = popup.querySelectorAll('[role="option"]');
+      options.forEach((option, i) => {
+        const selected = i === active;
+        option.classList.toggle('active', selected);
+        option.setAttribute('aria-selected', String(selected));
+      });
+      const current = options[active];
+      input.setAttribute('aria-activedescendant', current.id);
+      input.value = values[active];
+      current.scrollIntoView({block: 'nearest'});
+    };
+    const choose = (index) => {
+      if (index < 0 || index >= values.length) return;
+      input.value = values[index];
+      typed = input.value;
+      cancel();
+      close();
+      form.requestSubmit();
+    };
+    const render = (items) => {
+      values = items.filter(item => typeof item === 'string').slice(0, 8);
+      popup.replaceChildren();
+      values.forEach((value, i) => {
+        const option = document.createElement('div');
+        option.id = `query-suggestion-${i}`;
+        option.className = 'suggestion';
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.textContent = value;
+        option.addEventListener('pointerdown', event => event.preventDefault());
+        option.addEventListener('click', () => choose(i));
+        popup.append(option);
+      });
+      if (values.length) show(); else close();
+    };
+    const load = (activate = 0) => {
+      const query = input.value.trim();
+      cancel();
+      const mine = ticket;
+      controller = new AbortController();
+      fetch('/api/suggest?q=' + encodeURIComponent(query), {
+        headers: {'Accept': 'application/json'},
+        signal: controller.signal,
+      }).then(response => {
+        if (!response.ok || !(response.headers.get('content-type') || '').includes('application/json')) {
+          throw new Error('suggestions unavailable');
+        }
+        return response.json();
+      }).then(data => {
+        if (mine !== ticket || document.activeElement !== input || input.value.trim() !== query) return;
+        render(Array.isArray(data.suggestions) ? data.suggestions : []);
+        if (activate && values.length) setActive(activate > 0 ? 0 : values.length - 1);
+      }).catch(error => {
+        if (error.name === 'AbortError' || mine !== ticket) return;
+        values = [];
+        close();
+      });
+    };
+
+    input.addEventListener('input', () => {
+      typed = input.value;
+      values = [];
+      close();
+      cancel();
+      const query = input.value.trim();
+      if (query.length < 2 || query.startsWith('!')) return;
+      timer = setTimeout(() => load(), 220);
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const down = event.key === 'ArrowDown';
+        if (!values.length) {
+          typed = input.value;
+          if (input.value.trim().length >= 2) load(down ? 1 : -1);
+        } else {
+          if (popup.hidden) show();
+          setActive(active < 0 ? (down ? 0 : values.length - 1) : active + (down ? 1 : -1));
+        }
+      } else if (event.key === 'Enter' && !popup.hidden && active >= 0) {
+        event.preventDefault();
+        choose(active);
+      } else if (event.key === 'Escape' && !popup.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        input.value = typed;
+        values = [];
+        cancel();
+        close();
+      } else if (event.key === 'Tab') {
+        values = [];
+        cancel();
+        close();
+      }
+    });
+    form.addEventListener('submit', () => { cancel(); close(); });
+    form.addEventListener('focusout', event => {
+      if (!form.contains(event.relatedTarget)) { values = []; cancel(); close(); }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!form.contains(event.target)) { values = []; cancel(); close(); }
+    });
+  }
+})();
+"""
+
+
 def layout(title: str, body: str, theme: str = "", impression_id: str = "") -> str:
     theme_attr = f' data-theme="{escape(theme)}"' if theme in ("light", "dark") else ""
     return f"""<!doctype html>
@@ -325,6 +473,7 @@ def layout(title: str, body: str, theme: str = "", impression_id: str = "") -> s
       href="/opensearch.xml">
 <style>{CSS}</style></head>
 <body data-imp="{escape(impression_id)}">{body}
+<script>{AUTOSUGGEST_JS}</script>
 <script>
 // click beacon: send before navigation so the click is attributed to this
 // impression and position; capture phase runs before the anchor navigates
@@ -364,20 +513,26 @@ def _engine_pill(spec: Spec) -> str:
             f'{escape(spec.label)}</span>')
 
 
-def _search_form(q: str, mode: str = "web") -> str:
+def _search_form(q: str, mode: str = "web", suggest: bool = False) -> str:
     # The submit stays a real button so Enter and keyboard users work with JS off;
-    # it is just drawn inside the field as a magnifier.
+    # autocomplete only enhances that form when both the preference and Serper exist.
     tab_input = (f'<input type="hidden" name="tab" value="{escape(mode)}">'
                  if mode in ("images", "news") else "")
-    return f"""<form class="search" action="/search" method="get" role="search">{tab_input}
+    combo_attrs = (' role="combobox" aria-autocomplete="list" aria-expanded="false"'
+                   ' aria-controls="query-suggestions"' if suggest else "")
+    popup = ('<div id="query-suggestions" class="suggestions" role="listbox"'
+             ' aria-label="Search suggestions" hidden></div>' if suggest else "")
+    enabled = ' data-suggest="1"' if suggest else ""
+    return f"""<form class="search" action="/search" method="get" role="search"{enabled}>{tab_input}
   <div class="sb">
     <input type="search" name="q" value="{escape(q)}" placeholder="Search, or !bang a site"
-           autocomplete="off" spellcheck="false" aria-label="Search query">
+           autocomplete="off" spellcheck="false" aria-label="Search query"{combo_attrs}>
     <button type="submit" aria-label="Search">
       <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"
         fill="none" stroke="currentColor" stroke-width="2.2"/><line x1="16" y1="16" x2="21" y2="21"
         stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
     </button>
+    {popup}
   </div>
 </form>"""
 
@@ -407,7 +562,8 @@ def _tabs(q: str, time_range: str, ss: str, mode: str = "web") -> str:
             f'</nav>')
 
 
-def home(enabled: list[Spec], configured: list[Spec], theme: str = "") -> str:
+def home(enabled: list[Spec], configured: list[Spec], theme: str = "",
+         suggest: bool = False) -> str:
     off = len(configured) - len(enabled)
     pills = " ".join(_engine_pill(s) for s in enabled)
     more = (f'<a class="more" href="/preferences" title="{off} more available"'
@@ -417,7 +573,7 @@ def home(enabled: list[Spec], configured: list[Spec], theme: str = "") -> str:
     body = f"""<div class="wrap"><div class="home">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
   <div class="tag">A search engine over agentic indexes.</div>
-  {_search_form("")}
+  {_search_form("", suggest=suggest)}
   <div class="engines">{engines_block}</div>
   <footer style="justify-content:center;border:0;margin-top:26px">
     <a href="/preferences">Preferences</a><a href="/stats">Engine stats</a>
@@ -552,7 +708,7 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                  impression_id: str = "",
                  reps: dict | None = None,
                  new_tab: bool = False,
-                 mode: str = "web") -> str:
+                 mode: str = "web", suggest: bool = False) -> str:
     by_name = {s.name: s for s in all_engines}
     failed = [r for r in results if not r.ok and r.error and r.error != "no key"]
     ok = [r for r in results if r.ok]
@@ -632,7 +788,7 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
 
     body = f"""<header class="top has-tabs"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form(q, mode)}
+  {_search_form(q, mode, suggest=suggest)}
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a><a href="/logout">Log out</a></div>
 </div><div class="wrap">{_tabs(q, time_range, ss, mode)}</div></header>
 <div class="wrap">
@@ -856,7 +1012,8 @@ def _timings_line(results: list, cached_age: float | None,
     return f'<div class="timings">{" · ".join(bits)}{note}</div>'
 
 
-def stats_page(rows: list[dict], hours: int, labels: dict[str, str] | None = None) -> str:
+def stats_page(rows: list[dict], hours: int, labels: dict[str, str] | None = None,
+               suggest: bool = False) -> str:
     window = "last 24 hours" if hours <= 24 else "last 7 days"
     if not rows:
         body_rows = ('<tr><td colspan="7" style="color:var(--muted)">'
@@ -879,7 +1036,7 @@ def stats_page(rows: list[dict], hours: int, labels: dict[str, str] | None = Non
     other_label = "7 days" if hours <= 24 else "24 hours"
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form("")}
+  {_search_form("", suggest=suggest)}
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a>
     <a href="/logout">Log out</a></div>
 </div></header>
@@ -968,7 +1125,8 @@ def rank_debug(q: str, ranked: list, rrf: list, cfg: dict, cached: bool,
 
 def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
                 per: int, q: str = "", new_tab: bool = False,
-                deep: str = "auto") -> str:
+                deep: str = "auto", serper_available: bool = False,
+                suggest: bool = False) -> str:
     def _group(specs: list[Spec]) -> str:
         out = []
         for spec in specs:
@@ -1001,7 +1159,7 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
 
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form(q)}
+  {_search_form(q, suggest=suggest and serper_available)}
   <div class="nav"><a href="/about">About</a></div>
 </div></header>
 <div class="wrap"><form class="prefs" action="/preferences" method="get">
@@ -1026,6 +1184,8 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
     <label>Results <span class="sub"><select name="per">{per_sel}</select></span></label>
     <label><input type="checkbox" name="newtab" value="1"{' checked' if new_tab else ''}>
       Open results in a new tab</label>
+    <label class="suggest-pref"><input type="checkbox" name="suggest" value="1"{' checked' if suggest and serper_available else ''}{'' if serper_available else ' disabled'}>
+      Live search suggestions <span class="sub">{'via Google (Serper)' if serper_available else 'requires the Serper API key'}</span></label>
     <label>Deep engines <span class="sub"><select name="deep">
       <option value="auto"{' selected' if deep != "always" else ''}>only when needed</option>
       <option value="always"{' selected' if deep == "always" else ''}>always</option>
@@ -1037,6 +1197,11 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
   <span class="sub" style="display:inline">encrypted at rest, write-only</span></p>
 </div>"""
     extra = """
+.prefs .suggest-pref{flex-wrap:wrap}
+.prefs .suggest-pref .sub{flex:1 1 auto;text-align:right}
+@media (max-width:480px){
+  .prefs .suggest-pref .sub{flex-basis:100%;margin-left:22px;text-align:left}
+}
 .egroup{margin:4px 0 10px}
 .egt{position:relative;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
   letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 2px}
@@ -1077,7 +1242,8 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
 
 
 def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
-              csrf: str, message: str = "", theme: str = "") -> str:
+              csrf: str, message: str = "", theme: str = "",
+              suggest: bool = False) -> str:
     """API keys: write-only in the UI, encrypted at rest by secrets_store."""
     def row(spec: Spec) -> str:
         key_name = spec.env[0] if spec.env else ""
@@ -1111,7 +1277,7 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
     msg = f'<p class="ok-msg">{escape(message)}</p>' if message else ""
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form("")}
+  {_search_form("", suggest=suggest)}
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a>
     <a href="/logout">Log out</a></div>
 </div></header>
@@ -1155,7 +1321,7 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
     return layout("API keys · trivet", body, theme).replace("</style>", extra + "</style>")
 
 
-def about(engines: list[Spec], theme: str = "") -> str:
+def about(engines: list[Spec], theme: str = "", suggest: bool = False) -> str:
     def caps(s: Spec) -> str:
         bits = []
         if s.image_fn is not None:
@@ -1174,7 +1340,7 @@ def about(engines: list[Spec], theme: str = "") -> str:
         for s in engines)
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form("")}
+  {_search_form("", suggest=suggest)}
   <div class="nav"><a href="/preferences">Preferences</a></div>
 </div></header>
 <div class="wrap"><div class="prefs">
