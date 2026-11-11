@@ -182,6 +182,12 @@ so an open instance is somebody else's free search engine.
   cancels stale requests, caches successful prefixes in memory for five minutes, and has a
   separate rate limit from full searches. The Preferences toggle requires a configured Serper
   key and defaults on when one exists; ordinary search still works with JavaScript disabled.
+- **Quick answers** — end a Web query with `?` to generate one cited answer above the results.
+  Preferences has an opt-in **Quick answer** toggle and an answer-engine selector limited to
+  configured, supported providers: Exa, Tavily, Keenable, Linkup, or Valyu. The selected provider
+  runs concurrently with normal Web search, so its failure never removes the result list. Answers
+  use a bounded 128-entry, 15-minute memory cache; `nocache=1` bypasses it. Inline citations and
+  source links are sanitized rather than rendered as vendor HTML.
 - **News search** — `/search?q=…&tab=news` fuses Exa, Brave, Tavily, Google (Serper) and
   Firecrawl news indexes, normalises four vendor date formats into one recency curve
   (36h half-life blended with RRF consensus), and expires cache rows in 5 minutes instead
@@ -193,7 +199,7 @@ so an open instance is somebody else's free search engine.
 - **Bookmarkable everything** — query, tab, page, engines, time filter, safe search, results per
   page are all in the URL.
 - **Preferences** as cookies: engines by tier, theme, safe search, results per page,
-  open-in-new-tab, live autocomplete, deep-engine policy.
+  open-in-new-tab, live autocomplete, quick answer and its provider, deep-engine policy.
 - **Query cache** in SQLite keyed on query + engines + filters + fetch depth. A repeat is
   instant, and a ranking change still applies immediately because candidates are cached,
   not the ordering.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from html import escape
@@ -14,7 +15,7 @@ from urllib.parse import urlencode, urlsplit
 
 from _version import __version__ as VERSION
 from merge import MergedHit
-from providers import (EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT,
+from providers import (BY_NAME, EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT,
                        RECOMMENDED_NOTE, Spec, fmt_news_age)
 import thumb_proxy
 
@@ -167,6 +168,28 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 .filters .sep{width:1px;height:16px;background:var(--line);margin:0 8px}
 article.res{padding:17px 0 18px;border-bottom:1px solid var(--line)}
 article.res:last-of-type{border-bottom:0}
+.quick{border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));
+  background:color-mix(in srgb,var(--accent) 4%,var(--bg));border-radius:12px;
+  padding:15px 17px;margin:18px 0 8px;overflow-wrap:anywhere}
+.qhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.qhead h2{font-size:11px;line-height:1.2;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--accent);margin:0}
+.qengine{font-size:12px;color:var(--fg);font-weight:600}
+.qsep{color:var(--muted);font-size:12px}
+.qmeta{margin-left:auto;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.qbody{font-size:15px;line-height:1.62}
+.qbody p{margin:0 0 10px}.qbody p:last-child{margin-bottom:0}
+.qbody a{text-decoration:underline;text-underline-offset:2px}
+.qcite{font-size:11px;font-weight:700;line-height:0;margin-left:2px;white-space:nowrap}
+.qcluster{white-space:nowrap}
+.qcite a{text-decoration:none;padding:0 1px;color:var(--link)}
+.qerror{font-size:13px;color:var(--muted);margin:0}
+.qsources{margin-top:11px;border-top:1px solid var(--line);padding-top:8px;font-size:12px}
+.qsources summary{cursor:pointer;color:var(--muted);min-height:28px;padding:4px 0;font-weight:500}
+.qsources summary:hover{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+.qsources ol{margin:6px 0 0;padding-left:22px}
+.qsources li{margin:4px 0;padding-left:2px}
+.qsources .qdomain{color:var(--muted);margin-left:5px}
 .src{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted);margin-bottom:4px}
 .src .outlet{color:var(--fg);font-weight:500;white-space:nowrap;flex:0 0 auto}
 .src .dom{color:var(--muted);font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -700,6 +723,84 @@ def _image_result(hit: MergedHit, engines: dict[str, Spec],
 </figure>"""
 
 
+_ANSWER_TOKEN = re.compile(
+    r"\[([^\]\n]{1,300})\]\((https?://[^\s)]+)\)|((?:\[\d{1,2}\])+)|(\*\*[^*\n]{1,300}\*\*)")
+
+
+def _answer_inline(text: str, citations: list, target: str) -> str:
+    """Escape vendor prose while preserving only links, [n] citations and bold."""
+    out: list[str] = []
+    pos = 0
+    for match in _ANSWER_TOKEN.finditer(text):
+        out.append(escape(text[pos:match.start()]).replace("\n", "<br>"))
+        label, url, number, bold = match.groups()
+        if url:
+            safe = _safe_href(url)
+            out.append(f'<a href="{escape(safe)}" rel="noopener"{target}>{escape(label)}</a>')
+        elif number:
+            cluster: list[str] = []
+            for marker in re.findall(r"\d{1,2}", number):
+                index = int(marker) - 1
+                if 0 <= index < len(citations) and _safe_href(citations[index].url) != "#":
+                    source = citations[index]
+                    cluster.append(
+                        f'<sup class="qcite"><a href="{escape(_safe_href(source.url))}" '
+                        f'rel="noopener"{target} aria-label="Source {marker}: {escape(source.title)}">'
+                        f'[{marker}]</a></sup>')
+                else:
+                    cluster.append(escape(f"[{marker}]"))
+            out.append(f'<span class="qcluster">{"".join(cluster)}</span>')
+        elif bold:
+            out.append(f"<strong>{escape(bold[2:-2])}</strong>")
+        pos = match.end()
+    out.append(escape(text[pos:]).replace("\n", "<br>"))
+    return "".join(out)
+
+
+def _quick_answer(answer, new_tab: bool = False) -> str:
+    if answer is None:
+        return ""
+    spec = BY_NAME.get(answer.engine)
+    label = spec.label if spec else answer.engine
+    if answer.cached_age is not None:
+        age = "just now" if answer.cached_age < 10 else f"{_human_age(answer.cached_age)} ago"
+        timing = f"cached {age}"
+        timing_title = "Cached answer age"
+    else:
+        timing = f"{answer.ms / 1000:.1f}s"
+        timing_title = "Answer provider latency"
+    target = ' target="_blank"' if new_tab else ""
+    head = (f'<div class="qhead"><h2 id="quick-answer-title">Quick answer</h2>'
+            f'<span class="qsep" aria-hidden="true">·</span>'
+            f'<span class="qengine">{escape(label)}</span>'
+            f'<span class="qmeta" title="{timing_title}">{escape(timing)}</span></div>')
+    if not answer.ok:
+        return (f'<aside class="quick" aria-labelledby="quick-answer-title">{head}'
+                f'<p class="qerror">{escape(label)} could not answer '
+                f'({escape(answer.error or "unknown error")}). Web results are unaffected.</p></aside>')
+    paragraphs = re.split(r"\n\s*\n", answer.text.strip())
+    content = "".join(f'<p>{_answer_inline(p, answer.citations, target)}</p>'
+                      for p in paragraphs if p.strip())
+    sources = ""
+    visible_sources = []
+    seen_urls = set()
+    for citation in answer.citations:
+        if _safe_href(citation.url) == "#" or citation.url in seen_urls:
+            continue
+        seen_urls.add(citation.url)
+        visible_sources.append(citation)
+    if visible_sources:
+        rows = "".join(
+            f'<li><a href="{escape(_safe_href(c.url))}" rel="noopener"{target}>'
+            f'{escape(c.title)}</a><span class="qdomain">{escape(urlsplit(c.url).netloc)}</span></li>'
+            for c in visible_sources)
+        sources = (f'<details class="qsources"><summary>{len(visible_sources)} '
+                   f'{"source" if len(visible_sources) == 1 else "sources"}</summary>'
+                   f'<ol>{rows}</ol></details>')
+    return (f'<aside class="quick" aria-labelledby="quick-answer-title">{head}'
+            f'<div class="qbody">{content}</div>{sources}</aside>')
+
+
 def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                  total_unique: int, elapsed: float, results: list[EngineResult],
                  engines_on: set[str], all_engines: list[Spec], time_range: str,
@@ -708,7 +809,8 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                  impression_id: str = "",
                  reps: dict | None = None,
                  new_tab: bool = False,
-                 mode: str = "web", suggest: bool = False) -> str:
+                 mode: str = "web", suggest: bool = False,
+                 quick_answer=None) -> str:
     by_name = {s.name: s for s in all_engines}
     failed = [r for r in results if not r.ok and r.error and r.error != "no key"]
     ok = [r for r in results if r.ok]
@@ -792,6 +894,7 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a><a href="/logout">Log out</a></div>
 </div><div class="wrap">{_tabs(q, time_range, ss, mode)}</div></header>
 <div class="wrap">
+  {_quick_answer(quick_answer, new_tab)}
   <div class="status">
     <span class="count">{count_plain}</span>
     <details class="diag">
@@ -1126,7 +1229,8 @@ def rank_debug(q: str, ranked: list, rrf: list, cfg: dict, cached: bool,
 def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
                 per: int, q: str = "", new_tab: bool = False,
                 deep: str = "auto", serper_available: bool = False,
-                suggest: bool = False) -> str:
+                suggest: bool = False, answer_engines: list[Spec] | None = None,
+                answer: bool = False, answer_engine: str = "") -> str:
     def _group(specs: list[Spec]) -> str:
         out = []
         for spec in specs:
@@ -1156,6 +1260,12 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
     per_sel = "".join(
         f'<option value="{n}"{" selected" if per == n else ""}>{n} per page</option>'
         for n in (10, 20, 30))
+    answer_engines = answer_engines or []
+    answer_sel = "".join(
+        f'<option value="{escape(s.name)}"{" selected" if answer_engine == s.name else ""}>'
+        f'{escape(s.label)}</option>' for s in answer_engines)
+    if not answer_engines:
+        answer_sel = '<option value="">No supported API key</option>'
 
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
@@ -1186,6 +1296,9 @@ def preferences(engines: list[Spec], engines_on: set[str], theme: str, ss: str,
       Open results in a new tab</label>
     <label class="suggest-pref"><input type="checkbox" name="suggest" value="1"{' checked' if suggest and serper_available else ''}{'' if serper_available else ' disabled'}>
       Live search suggestions <span class="sub">{'via Google (Serper)' if serper_available else 'requires the Serper API key'}</span></label>
+    <label class="suggest-pref"><input type="checkbox" name="answer" value="1"{' checked' if answer and answer_engines else ''}{'' if answer_engines else ' disabled'}>
+      Quick answer <span class="sub">{'end a query with ?' if answer_engines else 'requires a supported API key'}</span></label>
+    <label>Answer engine <span class="sub"><select name="answer_engine"{'' if answer_engines else ' disabled'}>{answer_sel}</select></span></label>
     <label>Deep engines <span class="sub"><select name="deep">
       <option value="auto"{' selected' if deep != "always" else ''}>only when needed</option>
       <option value="always"{' selected' if deep == "always" else ''}>always</option>

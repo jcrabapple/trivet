@@ -704,3 +704,192 @@ def test_preference_save_cannot_enable_suggest_without_serper(env):
     saved = client.get("/preferences?save=1&suggest=1", headers=headers,
                        follow_redirects=False)
     assert saved.cookies["tv_suggest"] == "1"
+
+
+# ------------------------------------------------------------------ quick answer
+def test_answer_trigger_and_exa_cache(env):
+    import asyncio
+    import httpx
+    answers = _fresh("answers")
+    assert answers.triggered("What is Paris?")
+    assert answers.triggered("What is Paris?  ")
+    assert not answers.triggered("What is Paris")
+    assert not answers.triggered("?")
+    assert answers.question("What is Paris??") == "What is Paris"
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        assert request.headers["x-api-key"] == "exa-test"
+        return httpx.Response(200, json={
+            "answer": "Paris [1][2].",
+            "citations": [
+                {"title": "Britannica", "url": "https://britannica.com/place/Paris"},
+                {"title": "Unsafe", "url": "javascript:alert(1)"},
+                {"title": "Wikipedia", "url": "https://wikipedia.org/wiki/Paris"},
+            ],
+        })
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            first = await answers.get(client, "exa", "What is Paris?", {"EXA_API_KEY": "exa-test"})
+            second = await answers.get(client, "exa", " what is paris? ", {"EXA_API_KEY": "exa-test"})
+            return first, second
+
+    first, second = asyncio.run(exercise())
+    assert first.ok and first.text == "Paris [1][2]."
+    assert len(first.citations) == 3
+    assert sum(bool(c.url) for c in first.citations) == 2
+    assert first.citations[1].url == ""          # position [2] was not shifted
+    assert second.cached_age is not None and second.ms == 0
+    assert calls == 1
+
+
+def test_answer_failures_are_not_cached(env):
+    import asyncio
+    import httpx
+    answers = _fresh("answers")
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, json={"error": "temporary"})
+        return httpx.Response(200, json={"answer": "Paris", "citations": []})
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            failed = await answers.get(client, "exa", "Capital?", {"EXA_API_KEY": "k"})
+            recovered = await answers.get(client, "exa", "Capital?", {"EXA_API_KEY": "k"})
+            return failed, recovered
+
+    failed, recovered = asyncio.run(exercise())
+    assert failed.error == "HTTP 503"
+    assert recovered.ok and calls == 2
+
+
+def test_valyu_answer_stream_collects_text_and_sources(env):
+    import asyncio
+    import httpx
+    answers = _fresh("answers")
+    payload = (
+        'data: {"search_results":[{"title":"Britannica","url":"https://britannica.com/place/Paris"}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"Paris is the capital "}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"of France ([Britannica](https://britannica.com/place/Paris))."}}]}\n\n'
+        'data: {"success":true,"cost":{"total_deduction_dollars":0.01}}\n\n'
+        'data: [DONE]\n\n'
+    )
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=payload.encode())
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await answers.get(client, "valyu", "Capital of France?", {"VALYU_API_KEY": "k"})
+
+    result = asyncio.run(exercise())
+    assert result.ok
+    assert result.text.startswith("Paris is the capital of France")
+    assert result.citations[0].title == "Britannica"
+
+
+def test_quick_answer_render_escapes_html_and_links_citations(env):
+    answers = _fresh("answers")
+    render = _fresh("render")
+    result = answers.AnswerResult("exa", ms=1036, citations=[
+        answers.Citation("Britannica", "https://britannica.com/place/Paris")],
+        text="**Paris** [1][1] <script>alert(1)</script>\n[Britannica](https://britannica.com/place/Paris)")
+    html = render._quick_answer(result, new_tab=True)
+    assert "Quick answer" in html and "Exa" in html and "1.0s" in html
+    assert '<span class="qcluster">' in html
+    assert "<strong>Paris</strong>" in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<script>alert(1)</script>" not in html
+    assert 'aria-label="Source 1: Britannica"' in html
+    assert 'target="_blank"' in html
+    assert "1 source" in html
+
+
+def test_answer_preference_lists_only_supported_configured_engines(env):
+    providers = _fresh("providers")
+    render = _fresh("render")
+    choices = [providers.BY_NAME["exa"], providers.BY_NAME["tavily"]]
+    html = render.preferences([], set(), "", "moderate", 10,
+                              answer_engines=choices, answer=True, answer_engine="tavily")
+    assert 'name="answer" value="1" checked' in html
+    assert '<option value="exa">Exa</option>' in html
+    assert '<option value="tavily" selected>Tavily</option>' in html
+    assert '<option value="linkup"' not in html
+    assert "end a query with ?" in html
+
+
+def test_answer_preference_save_requires_a_supported_key(env):
+    import base64
+    from fastapi.testclient import TestClient
+    app_mod = _fresh("app")
+    client = TestClient(app_mod.app)
+    headers = {"Authorization": "Basic " + base64.b64encode(b"admin:hunter2").decode()}
+    app_mod.ENGINES = []
+    saved = client.get("/preferences?save=1&answer=1&answer_engine=exa", headers=headers,
+                       follow_redirects=False)
+    assert saved.cookies["tv_answer"] == "0"
+    assert saved.cookies["tv_answer_engine"].strip('"') == ""
+
+    app_mod.ENGINES = [app_mod.BY_NAME["exa"], app_mod.BY_NAME["tavily"]]
+    saved = client.get("/preferences?save=1&answer=1&answer_engine=tavily", headers=headers,
+                       follow_redirects=False)
+    assert saved.cookies["tv_answer"] == "1"
+    assert saved.cookies["tv_answer_engine"] == "tavily"
+
+
+def test_api_answer_runs_only_for_enabled_web_page_one_question(env, monkeypatch):
+    import base64
+    from fastapi.testclient import TestClient
+    app_mod = _fresh("app")
+    app_mod.ENGINES = [app_mod.BY_NAME["exa"]]
+    app_mod.ENV = {"EXA_API_KEY": "exa-test"}
+    client = TestClient(app_mod.app)
+    headers = {"Authorization": "Basic " + base64.b64encode(b"admin:hunter2").decode()}
+    client.cookies.set("tv_answer", "1")
+    client.cookies.set("tv_answer_engine", "exa")
+    calls = []
+
+    async def fake_search(query, *args, **kwargs):
+        return {"results": [], "merged": [], "ranked": [], "window": [],
+                "elapsed": 0.01, "cached_age": None}
+
+    async def fake_answer(client, engine, query, env, use_cache=True):
+        calls.append((engine, query, use_cache))
+        return app_mod.answers.AnswerResult("exa", "Paris [1]", [
+            app_mod.answers.Citation("Britannica", "https://britannica.com/place/Paris")], ms=1000)
+
+    monkeypatch.setattr(app_mod, "search", fake_search)
+    monkeypatch.setattr(app_mod.answers, "get", fake_answer)
+    good = client.get("/api/search?q=Capital%20of%20France%3F", headers=headers)
+    assert good.status_code == 200
+    assert good.json()["quick_answer"]["answer"] == "Paris [1]"
+    assert good.json()["quick_answer"]["citations"][0]["title"] == "Britannica"
+    assert calls == [("exa", "Capital of France?", True)]
+
+    for path in ("/api/search?q=Capital%20of%20France",
+                 "/api/search?q=Capital%3F&page=2",
+                 "/api/search?q=Capital%3F&tab=news"):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["quick_answer"] is None
+    assert len(calls) == 1
+
+    client.cookies.set("tv_answer", "0")
+    disabled = client.get("/api/search?q=Capital%3F", headers=headers)
+    assert disabled.json()["quick_answer"] is None
+    assert len(calls) == 1
+
+    # Removing the chosen provider must not silently spend money with another one.
+    client.cookies.set("tv_answer", "1")
+    client.cookies.set("tv_answer_engine", "exa")
+    app_mod.ENGINES = [app_mod.BY_NAME["tavily"]]
+    removed = client.get("/api/search?q=Capital%3F", headers=headers)
+    assert removed.json()["quick_answer"] is None
+    assert len(calls) == 1

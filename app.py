@@ -26,6 +26,7 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+import answers
 import auth
 import bangs
 import cache
@@ -184,6 +185,32 @@ def _serper_available() -> bool:
 def _suggest_enabled(request: Request) -> bool:
     # On by default only where it can work; an explicit preference always wins.
     return _serper_available() and _cookie(request, "suggest", "1") == "1"
+
+
+def _answer_specs() -> list:
+    return answers.available(ENGINES)
+
+
+def _answer_engine(request: Request) -> str:
+    """A stored selection is valid only while that provider remains configured."""
+    specs = _answer_specs()
+    configured = {s.name for s in specs}
+    stored = _cookie(request, "answer_engine")
+    if stored:
+        return stored if stored in configured else ""
+    if "exa" in configured:
+        return "exa"
+    return specs[0].name if specs else ""
+
+
+def _answer_enabled(request: Request) -> bool:
+    # Paid generation is opt-in and still requires the explicit trailing '?' trigger.
+    return bool(_answer_engine(request)) and _cookie(request, "answer", "0") == "1"
+
+
+def _answer_wanted(request: Request, query: str, mode: str, page: int) -> bool:
+    return (mode == "web" and page == 1 and _answer_enabled(request)
+            and answers.triggered(query))
 
 
 _TRUSTED_PROXIES = {"127.0.0.1", "::1"}
@@ -531,10 +558,15 @@ async def search_page(
     if bang:
         return RedirectResponse(bang["url"], status_code=302)
 
-    data = await search(q, chosen, page, per_cur, ss_cur, time_range,
-                        use_cache=not nocache, ranker=rank,
-                        deep_policy=_cookie(request, "deep", "auto"),
-                        mode=mode)
+    search_coro = search(q, chosen, page, per_cur, ss_cur, time_range,
+                         use_cache=not nocache, ranker=rank,
+                         deep_policy=_cookie(request, "deep", "auto"), mode=mode)
+    if _answer_wanted(request, q, mode, page):
+        data, quick_answer = await asyncio.gather(
+            search_coro,
+            answers.get(CLIENT, _answer_engine(request), q, ENV, use_cache=not nocache))
+    else:
+        data, quick_answer = await search_coro, None
     impression_id = feedback.new_impression_id() if mode == "web" else ""
     if mode == "web" and data["window"]:
         # log what is actually shown: a click without an impression cannot be
@@ -549,7 +581,7 @@ async def search_page(
         time_range=time_range, ss=ss_cur, theme=theme,
         cached_age=data["cached_age"], impression_id=impression_id,
         reps=data.get("reps"), new_tab=_cookie(request, "newtab") == "1",
-        mode=mode, suggest=_suggest_enabled(request)))
+        mode=mode, suggest=_suggest_enabled(request), quick_answer=quick_answer))
 
 
 @app.get("/img")
@@ -610,6 +642,15 @@ async def preferences(request: Request) -> Response:
         suggest_on = params.get("suggest") == "1" and _serper_available()
         resp.set_cookie("tv_suggest", "1" if suggest_on else "0",
                         max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+        answer_providers = {s.name for s in _answer_specs()}
+        answer_engine = params.get("answer_engine", "")
+        if answer_engine not in answer_providers:
+            answer_engine = _answer_engine(request)
+        answer_on = params.get("answer") == "1" and answer_engine in answer_providers
+        resp.set_cookie("tv_answer", "1" if answer_on else "0",
+                        max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+        resp.set_cookie("tv_answer_engine", answer_engine,
+                        max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
         # "auto" keeps a 6s deep engine off the critical path unless the fast tier
         # cannot fill a page; "always" is the old behaviour, for when you want it
         resp.set_cookie("tv_deep", "always" if params.get("deep") == "always" else "auto",
@@ -623,7 +664,10 @@ async def preferences(request: Request) -> Response:
                                            _cookie(request, "newtab") == "1",
                                            _cookie(request, "deep", "auto"),
                                            serper_available=_serper_available(),
-                                           suggest=_suggest_enabled(request)))
+                                           suggest=_suggest_enabled(request),
+                                           answer_engines=_answer_specs(),
+                                           answer=_answer_enabled(request),
+                                           answer_engine=_answer_engine(request)))
 
 
 @app.get("/settings/keys", response_class=HTMLResponse)
@@ -783,6 +827,7 @@ async def healthz() -> dict[str, Any]:
             "engines": [s.name for s in ENGINES],
             "image_engines": [s.name for s in ENGINES if s.image_fn is not None],
             "news_engines": [s.name for s in ENGINES if s.news_fn is not None],
+            "answer_engines": [s.name for s in _answer_specs()],
             "cache": cache.stats(),
             "datasets": {"smallweb": smallweb.size(), "bangs": bangs.size()}}
 
@@ -809,10 +854,15 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
     chosen = _pick_engines(request, engines, pool=pool)
     per = limit or (IMAGE_PER_DEFAULT if mode == "images" else 10)
     ss_cur, _, time_range = _prefs(request, ss, None, time)
-    data = await search(q, chosen, page, per, ss_cur, time_range,
-                        use_cache=not nocache, ranker=rank,
-                        deep_policy=_cookie(request, "deep", "auto"),
-                        mode=mode)
+    search_coro = search(q, chosen, page, per, ss_cur, time_range,
+                         use_cache=not nocache, ranker=rank,
+                         deep_policy=_cookie(request, "deep", "auto"), mode=mode)
+    if _answer_wanted(request, q, mode, page):
+        data, quick_answer = await asyncio.gather(
+            search_coro,
+            answers.get(CLIENT, _answer_engine(request), q, ENV, use_cache=not nocache))
+    else:
+        data, quick_answer = await search_coro, None
     rows = []
     for h in data["window"]:
         item: dict[str, Any] = {
@@ -840,6 +890,12 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
         "mode": mode,
         "took_ms": int(data["elapsed"] * 1000),
         "cached_age_s": round(data["cached_age"], 1) if data["cached_age"] is not None else None,
+        "quick_answer": ({
+            "engine": quick_answer.engine, "answer": quick_answer.text,
+            "citations": [asdict(c) for c in quick_answer.citations],
+            "ms": quick_answer.ms, "cached_age_s": quick_answer.cached_age,
+            "error": quick_answer.error or None,
+        } if quick_answer else None),
         "unique": len(data["merged"]),
         "raw": sum(len(r.hits) for r in data["results"] if r.ok),
         "consensus": engine_consensus(data["results"]),
