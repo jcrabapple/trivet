@@ -21,6 +21,7 @@ from dataclasses import asdict
 import app as ms
 import merge
 import ranking
+import reputation
 
 HERE = pathlib.Path(__file__).parent
 QUERIES = json.loads((HERE / "eval/queries.json").read_text())
@@ -40,17 +41,21 @@ def _iter_queries(snapshot: list | None):
         return
     for row in snapshot:
         hits = [merge.MergedHit(**h) for h in row["merged"]]
-        yield row, hits
+        reps = {k: reputation.Reputation(**v) for k, v in (row.get("reps") or {}).items()}
+        yield row, (hits, reps)
 
 
-async def save_snapshot(path: str) -> None:
+async def save_snapshot(path: str, engine_set: str = "default") -> None:
+    chosen = (list(ms.DEFAULT_ENGINES) if engine_set == "default"
+              else [s.name for s in ms.ENGINES])
     rows = []
     for spec in QUERIES:
-        data = await ms.search(spec["q"], [s.name for s in ms.ENGINES], 1, K,
+        data = await ms.search(spec["q"], chosen, 1, K,
                                "moderate", "any", use_cache=True, ranker="rrf")
         rows.append({"q": spec["q"], "expect": spec["expect"],
                      "note": spec.get("note", ""),
-                     "merged": [asdict(h) for h in data["merged"]]})
+                     "merged": [asdict(h) for h in data["merged"]],
+                     "reps": {k: asdict(v) for k, v in data["reps"].items()}})
     pathlib.Path(path).write_text(json.dumps(rows, indent=1))
     print(f"snapshot written: {path} ({sum(len(r['merged']) for r in rows)} candidates)")
 
@@ -74,15 +79,20 @@ def mrr(gains: list[int]) -> float:
     return 0.0
 
 
-async def evaluate(ranker: str, verbose: bool, snapshot: list | None = None) -> dict:
+async def evaluate(ranker: str, verbose: bool, snapshot: list | None = None,
+                   engine_set: str = "default") -> dict:
+    chosen = (list(ms.DEFAULT_ENGINES) if engine_set == "default"
+              else [s.name for s in ms.ENGINES])
     ndcgs, mrrs, misses = [], [], []
-    for spec, frozen in _iter_queries(snapshot):
-        if frozen is not None:
-            ordered = ranking.rank(frozen, spec["q"]) if ranker != "rrf" else sorted(
-                frozen, key=lambda h: (-h.score, h.best_rank))
+    for spec, frozen_pair in _iter_queries(snapshot):
+        if frozen_pair is not None:
+            frozen, reps = frozen_pair
+            ordered = (ranking.rank(frozen, spec["q"], reputation=reps)
+                       if ranker != "rrf" else sorted(
+                           frozen, key=lambda h: (-h.score, h.best_rank)))
             urls = [r.hit.url if hasattr(r, "hit") else r.url for r in ordered][:K]
         else:
-            data = await ms.search(spec["q"], [s.name for s in ms.ENGINES], 1, K,
+            data = await ms.search(spec["q"], chosen, 1, K,
                                    "moderate", "any", use_cache=True, ranker=ranker)
             urls = [h.url for h in data["window"]]
         gains = [is_relevant(u, spec) for u in urls]
@@ -106,11 +116,12 @@ async def main() -> None:
     ap.add_argument("--weights", default="", help="JSON file of weight overrides to apply")
     ap.add_argument("--snapshot", default="", help="evaluate against a frozen candidate set")
     ap.add_argument("--save-snapshot", default="", help="write a frozen candidate set and exit")
+    ap.add_argument("--engines", default="default", choices=("default", "all"))
     args = ap.parse_args()
 
     QUERIES = json.loads(pathlib.Path(args.queries).read_text())
     if args.save_snapshot:
-        await save_snapshot(args.save_snapshot)
+        await save_snapshot(args.save_snapshot, args.engines)
         return
     if args.weights:
         override = json.loads(pathlib.Path(args.weights).read_text())
@@ -122,7 +133,7 @@ async def main() -> None:
     for ranker in args.rankers.split(","):
         if args.verbose:
             print(f"\n{ranker}:")
-        results[ranker] = await evaluate(ranker, args.verbose, snapshot)
+        results[ranker] = await evaluate(ranker, args.verbose, snapshot, args.engines)
     print(f"\n{'ranker':<8} {'nDCG@10':>8} {'MRR':>7}  missed")
     for name, r in results.items():
         print(f"{name:<8} {r['ndcg']:>8.3f} {r['mrr']:>7.3f}  {len(r['misses'])}")

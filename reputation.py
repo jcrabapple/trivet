@@ -34,7 +34,7 @@ AGH_URL = os.environ.get("TRIVET_ADGUARD_URL", "").rstrip("/")
 AGH_PASSWORD_FILE = os.path.expanduser(
     os.environ.get("TRIVET_ADGUARD_PASSWORD_FILE", "~/.config/trivet/adguard-password"))
 OVERRIDE_FILE = os.path.expanduser("~/.config/trivet/domains.json")
-DB_PATH = os.path.expanduser("~/.cache/trivet/cache.db")
+DB_PATH = os.path.expanduser(os.environ.get("TRIVET_DB", "~/.cache/trivet/cache.db"))
 CACHE_TTL = 7 * 86400          # reputation changes slowly; a week is plenty
 CHECK_TIMEOUT = 1.2
 

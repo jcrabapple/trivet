@@ -100,7 +100,7 @@ def boilerplate_score(snippet: str, title: str) -> float:
     return min(1.0, hits * 0.4)
 
 
-SLUG_LISTICLE_RE = re.compile(r"(best|top|ranked|reviewed|comparison|vs)[-_]", re.I)
+SLUG_LISTICLE_RE = re.compile(r"(best|top|ranked|reviewed)[-_]", re.I)
 
 
 def seo_penalty(title: str, url: str, snippet: str, publisher_trust: float) -> SeoFeatures:

@@ -14,8 +14,8 @@ from providers import EngineResult, Hit
 
 TRACKING_PREFIXES = ("utm_", "mc_", "hs_", "pk_", "oly_", "vero_")
 TRACKING_EXACT = {
-    "fbclid", "gclid", "dclid", "msclkid", "yclid", "igshid", "twclid",
-    "ref", "ref_src", "referrer", "source", "src", "s", "si", "spm",
+    "fbclid", "gclid", "dclid", "msclkid", "yclid", "igshid", "twclid", "srsltid",
+    "ref", "ref_src", "referrer", "source", "src", "s", "si", "spm", "vl",
     "share", "share_id", "cmpid", "campaign", "__twitter_impression",
 }
 DEFAULT_PORTS = {"http": "80", "https": "443"}

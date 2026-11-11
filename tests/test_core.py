@@ -484,3 +484,92 @@ def test_news_cache_ttl_expires_before_web_ttl(env):
                      (time.time() - 420, k))  # 7 minutes old
     assert cache.get(k, ttl=cache.NEWS_TTL_SECONDS) is None   # > 5m news TTL
     assert cache.get(k) is not None                           # < 15m web TTL
+
+
+# --------------------------------------------------------------- web ranker v2
+def test_clean_preserves_snake_case_and_unwraps_google_redirects(env):
+    providers = _fresh("providers")
+    assert "create_task" in providers._clean("Use **asyncio.create_task()** and _italic_ text")
+    assert "client_max_body_size" in providers._clean("Set `client_max_body_size` in nginx")
+
+    hits = providers._hits([
+        {"url": "https://www.google.com/url?opi=1&q=CAES_opaque_blob", "title": "junk"},
+        {"url": "https://www.google.com/url?q=https://example.org/guide", "title": "real"},
+    ], "serper")
+    assert [h.url for h in hits] == ["https://example.org/guide"]
+
+
+def test_gov_edu_suffixes_match_and_personal_edu_mirrors_are_discounted(env):
+    ranking = _fresh("ranking")
+    terms = ranking.query_terms("rust ownership and borrowing")
+    nps, _, _ = ranking._domain_prior("nps.gov", "https://www.nps.gov/shen/index.htm",
+                                      query="shenandoah national park")
+    pmc, _, _ = ranking._domain_prior("pmc.ncbi.nlm.nih.gov",
+                                      "https://pmc.ncbi.nlm.nih.gov/articles/PMC4421632",
+                                      query="creatine kidneys")
+    rust_doc, _, _ = ranking._domain_prior("doc.rust-lang.org",
+                                           "https://doc.rust-lang.org/book/ch04-00.html",
+                                           query="rust ownership and borrowing", terms=terms)
+    mit_mirror, _, _ = ranking._domain_prior("web.mit.edu",
+                                             "https://web.mit.edu/rust-lang_v1.25/book.html",
+                                             query="rust ownership and borrowing", terms=terms)
+    assert nps >= 0.80
+    assert pmc >= 0.80          # numeric PMC ID must not subtract from .gov prior
+    assert rust_doc > mit_mirror
+
+
+def test_subject_docs_outrank_qa_and_random_github_blobs(env):
+    merge_mod = _fresh("merge")
+    ranking = _fresh("ranking")
+    q = "fastapi background tasks"
+    official = merge_mod.MergedHit(
+        title="Background Tasks - FastAPI",
+        url="https://fastapi.tiangolo.com/tutorial/background-tasks",
+        snippet="Create background tasks to be run after returning a response.",
+        engines=["keenable", "exa", "brave", "serper"], score=0.065, best_rank=1,
+        sources=[{"e": "keenable", "r": 1}, {"e": "exa", "r": 1},
+                 {"e": "brave", "r": 1}, {"e": "serper", "r": 1}],
+    )
+    so_post = merge_mod.MergedHit(
+        title="FastAPI asynchronous background tasks blocks other requests?",
+        url="https://stackoverflow.com/questions/67599119/fastapi-background-tasks",
+        snippet="Why do FastAPI background tasks block?",
+        engines=["keenable", "exa", "brave", "serper"], score=0.062, best_rank=2,
+        sources=[{"e": "keenable", "r": 2}, {"e": "exa", "r": 2},
+                 {"e": "brave", "r": 3}, {"e": "serper", "r": 2}],
+    )
+    gh_blob = merge_mod.MergedHit(
+        title="9-fastapi-background-tasks/index.mdx",
+        url="https://github.com/someone/tutorials/blob/main/docs/fastapi-background-tasks.mdx",
+        snippet="FastAPI background tasks tutorial.",
+        engines=["exa"], score=0.015, best_rank=5,
+        sources=[{"e": "exa", "r": 5}],
+    )
+    ordered = [r.hit.url for r in ranking.rank([so_post, gh_blob, official], q)]
+    assert ordered == [official.url, so_post.url, gh_blob.url]
+
+
+def test_vendor_blogs_are_topic_gated_and_short_tokens_require_word_boundaries(env):
+    ranking = _fresh("ranking")
+    # 'ai' must not match 'said', 'domain', or 'contain'
+    terms = ranking.query_terms("ai code")
+    assert ranking._coverage(terms, "He said the main domain may contain data") == 0.0
+    # symmetric plural matching: 'kidneys' matches 'kidney'
+    assert ranking._coverage(["kidneys"], "creatine monohydrate and kidney function") == 1.0
+
+    # Cloudflare blog gets a strong boost on Cloudflare queries, modest on unrelated AI queries
+    cf_on, _, _ = ranking._domain_prior("blog.cloudflare.com",
+                                        "https://blog.cloudflare.com/cloudflare-tunnel",
+                                        query="cloudflare tunnel ingress")
+    cf_off, _, _ = ranking._domain_prior("blog.cloudflare.com",
+                                         "https://blog.cloudflare.com/ai-code-review",
+                                         query="ai code review tools")
+    assert cf_on > cf_off + 0.40
+
+    # Exact-match SEO domains on generic words must not get a brand-ownership boost
+    seo_vpn, _, _ = ranking._domain_prior("thebestvpn.com",
+                                          "https://thebestvpn.com/best-vpns-android/",
+                                          query="best vpn for android",
+                                          terms=ranking.query_terms("best vpn for android"),
+                                          intent="tech", choice=True)
+    assert seo_vpn == 0.0

@@ -170,7 +170,8 @@ def _clean(text: Any, limit: int = 240) -> str:
     if "<" in s:                                          # engine descriptions ship HTML
         s = re.sub(r"<[^>]{1,200}>", " ", s)
         s = html_module.unescape(s)
-    s = re.sub(r"[#*_`>]+", "", s)                        # markdown punctuation
+    s = re.sub(r"[#*`>]+", "", s)                         # markdown punctuation
+    s = re.sub(r"(?<![a-zA-Z0-9])_+|_+(?![a-zA-Z0-9])", "", s)  # keep snake_case intact
     s = " ".join(s.split()).lstrip("-–—•·|,;: ")          # list/bullet residue
     if len(s) <= limit:
         return s
@@ -278,6 +279,14 @@ def _hits(items, engine: str, *, url_key="url", title_key="title",
         if not isinstance(it, dict):
             continue
         url = str(it.get(url_key) or it.get("link") or it.get("href") or "").strip()
+        if "google.com/url?" in url.lower():
+            from urllib.parse import parse_qs, urlsplit
+            qs = parse_qs(urlsplit(url).query)
+            target = (qs.get("url") or qs.get("q") or [""])[0].strip()
+            if target.lower().startswith(_ALLOWED_SCHEMES):
+                url = target
+            else:
+                continue      # opaque tracking redirect wrapper (e.g. q=CAES...)
         if not url.lower().startswith(_ALLOWED_SCHEMES):
             continue          # a javascript: or data: URL is never a search result
         title = _clean(it.get(title_key) or it.get("name") or url, 200)
