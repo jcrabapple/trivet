@@ -36,11 +36,14 @@ import smallweb
 import stats
 import render
 import secrets_store
+import thumb_proxy
 from merge import MergedHit, engine_consensus, merge
 from providers import (BY_NAME, DEFAULT_ENGINES, SPECS, EngineResult, QueryOpts,
                        available, load_env, run_engine)
 
 PER_CHOICES = (10, 20, 30)
+IMAGE_PER_DEFAULT = 24
+IMAGE_PER_CHOICES = (10, 20, 24, 30, 48)
 ENGINE_TIMEOUT = 4.0   # cap so one slow engine cannot hold the page past ~4s
 COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
@@ -224,15 +227,17 @@ def _session(request: Request) -> str:
             or request.cookies.get("ms_session", ""))
 
 
-def _pick_engines(request: Request, raw: str | None) -> list[str]:
-    valid = {s.name for s in ENGINES}
+def _pick_engines(request: Request, raw: str | None,
+                  pool: list | None = None) -> list[str]:
+    specs = pool if pool is not None else ENGINES
+    valid = {s.name for s in specs}
     if raw is not None:
         chosen = [e for e in raw.split(",") if e in valid]
     else:
         stored = _cookie(request, "engines")
         chosen = [e for e in stored.split(",") if e in valid] if stored else []
     if not chosen:
-        chosen = [e for e in DEFAULT_ENGINES if e in valid] or list(valid)
+        chosen = [e for e in DEFAULT_ENGINES if e in valid] or [s.name for s in specs]
     return chosen
 
 
@@ -250,7 +255,7 @@ def _prefs(request: Request, ss: str | None, per: int | None,
     return ss, per, time_range
 
 
-CACHE_VERSION = 2   # 2 = candidates carry per-engine `sources`
+CACHE_VERSION = 3   # 3 = candidates carry image_url/thumb_url/width/height
 
 
 def _from_cache(payload: dict) -> tuple[list, list] | None:
@@ -264,10 +269,11 @@ def _from_cache(payload: dict) -> tuple[list, list] | None:
     return merged, engines
 
 
-async def _run_specs(specs, query, fetch, opts, results_out):
+async def _run_specs(specs, query, fetch, opts, results_out, mode: str = "web"):
     return await asyncio.gather(*[
         run_engine(CLIENT, s, query, fetch, ENV,
-                   10.0 if s.tier == "deep" else ENGINE_TIMEOUT, opts) for s in specs])
+                   10.0 if s.tier == "deep" else ENGINE_TIMEOUT, opts,
+                   mode=mode) for s in specs])
 
 
 MAX_QUERY = 512
@@ -275,12 +281,14 @@ MAX_QUERY = 512
 
 async def search(query: str, engine_names: list[str], page: int, per: int,
                  ss: str, time_range: str, use_cache: bool = True,
-                 ranker: str = "v1", deep_policy: str = "auto") -> dict[str, Any]:
+                 ranker: str = "v1", deep_policy: str = "auto",
+                 mode: str = "web") -> dict[str, Any]:
     query = query[:MAX_QUERY]
     specs = [BY_NAME[n] for n in engine_names if n in BY_NAME]
-    fetch = min(50, max(per, page * per))
+    cap = 60 if mode == "images" else 50
+    fetch = min(cap, max(per, page * per))
     key = cache.make_key(query, [s.name for s in specs], time_range, ss, fetch,
-                         deep_policy)
+                         deep_policy, mode=mode)
 
     if use_cache:
         hit = cache.get(key)
@@ -288,7 +296,8 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
         if cached:
             merged, engines = cached
             reps = await reputation.check_domains([h.url for h in merged])
-            ranked = _order(merged, query, ranker, reps)
+            ranked = (_order_images(merged, reps) if mode == "images"
+                      else _order(merged, query, ranker, reps))
             return {"results": engines, "merged": merged, "ranked": ranked,
                     "reps": reps,
                     "window": [r.hit for r in ranked[(page - 1) * per: page * per]],
@@ -302,7 +311,8 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
     # for the deep tier when it can add something -- fewer results than one page.
     fast_specs = [s for s in specs if s.tier != "deep"]
     deep_specs = [s for s in specs if s.tier == "deep"]
-    fast_results = await _run_specs(fast_specs, query, fetch, opts, None) if fast_specs else []
+    fast_results = (await _run_specs(fast_specs, query, fetch, opts, None, mode=mode)
+                    if fast_specs else [])
     results = list(fast_results)
     if deep_specs:
         # "came up short" means something concrete: an engine failed, or the fast
@@ -311,7 +321,7 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
         failed = any(not r.ok for r in fast_results)
         thin = failed or (len(merge(list(fast_results))) < per) if fast_specs else True
         if deep_policy == "always" or thin:
-            results += await _run_specs(deep_specs, query, fetch, opts, None)
+            results += await _run_specs(deep_specs, query, fetch, opts, None, mode=mode)
         else:
             results += [EngineResult(name=s.name, ok=True, skipped=True, ms=0)
                         for s in deep_specs]
@@ -323,7 +333,7 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
 
     # cache only a fully successful run; otherwise a transient 401/5xx would be
     # replayed for the whole TTL and hide a key that has since recovered
-    if all(r.ok for r in results):
+    if results and all(r.ok for r in results):
         # Store the *unranked* candidate set: ranking runs on every request, so a
         # weight change applies to already-cached queries instead of waiting out the TTL.
         cache.put(key, cache.normalize_query(query), {
@@ -336,7 +346,8 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
 
     stats.record(results)
     reps = await reputation.check_domains([h.url for h in merged])
-    ranked = _order(merged, query, ranker, reps)
+    ranked = (_order_images(merged, reps) if mode == "images"
+              else _order(merged, query, ranker, reps))
     return {"results": results, "merged": merged, "ranked": ranked, "reps": reps,
             "window": [r.hit for r in ranked[(page - 1) * per: page * per]],
             "elapsed": elapsed, "fetch": fetch, "cached_age": None}
@@ -348,6 +359,25 @@ def _order(merged: list, query: str, ranker: str, reps: dict | None = None) -> l
         ordered = sorted(merged, key=lambda h: (-h.score, h.best_rank))
         return [ranking.Ranked(hit=h, score=h.score) for h in ordered]
     return ranking.rank(merged, query, reputation=reps)
+
+
+_IMAGE_REP_PENALTY = {"malware": 0.010, "spam": 0.006, "ads": 0.002, "suspicious": 0.002}
+
+
+def _order_images(merged: list, reps: dict | None = None) -> list:
+    """Rank image hits by RRF consensus, demoting flagged hosts and tiny icons."""
+    reps = reps or {}
+    scored = []
+    for h in merged:
+        s = h.score
+        rep = reps.get(h.domain)
+        if rep is not None and getattr(rep, "flagged", False):
+            s -= _IMAGE_REP_PENALTY.get(rep.category, 0.002)
+        if 0 < max(h.width, h.height) < 120:
+            s -= 0.004
+        scored.append((s, h))
+    scored.sort(key=lambda pair: (-pair[0], pair[1].best_rank))
+    return [ranking.Ranked(hit=h, score=s) for s, h in scored]
 
 
 # ------------------------------------------------------------------- routes
@@ -430,19 +460,25 @@ async def search_page(
     ss: str | None = Query(None),
     per: int | None = Query(None),
     engines: str | None = Query(None),
+    tab: str = Query("web"),
     nocache: int = Query(0),
     rank: str = Query("v1"),
 ) -> HTMLResponse:
     q = q.strip()
+    mode = "images" if tab == "images" else "web"
     theme = _cookie(request, "theme")
     if q and not _rate_ok(_session(request) or _client_ip(request)):
         return HTMLResponse(render.rate_limited(theme), status_code=429,
                             headers={"Retry-After": "60"})
-    chosen = _pick_engines(request, engines)
+    pool = [s for s in ENGINES if s.image_fn is not None] if mode == "images" else ENGINES
+    chosen = _pick_engines(request, engines, pool=pool)
     ss_cur, per_cur, time_range = _prefs(request, ss, per, time)
+    if mode == "images":
+        per_cur = per if per in IMAGE_PER_CHOICES else IMAGE_PER_DEFAULT
 
     if not q:
-        return HTMLResponse(render.home([s for s in ENGINES if s.name in chosen],
+        web_chosen = set(_pick_engines(request, None, pool=ENGINES))
+        return HTMLResponse(render.home([s for s in ENGINES if s.name in web_chosen],
                                         ENGINES, theme))
 
     bang = bangs.resolve(q)
@@ -451,9 +487,10 @@ async def search_page(
 
     data = await search(q, chosen, page, per_cur, ss_cur, time_range,
                         use_cache=not nocache, ranker=rank,
-                        deep_policy=_cookie(request, "deep", "auto"))
-    impression_id = feedback.new_impression_id()
-    if data["window"]:
+                        deep_policy=_cookie(request, "deep", "auto"),
+                        mode=mode)
+    impression_id = feedback.new_impression_id() if mode == "web" else ""
+    if mode == "web" and data["window"]:
         # log what is actually shown: a click without an impression cannot be
         # evaluated later, and position bias lives in the impression
         feedback.log_impression(impression_id, q, rank, chosen,
@@ -462,10 +499,36 @@ async def search_page(
     return HTMLResponse(render.results_page(
         q=q, hits=data["window"], page=page, per=per_cur,
         total_unique=len(data["merged"]), elapsed=data["elapsed"],
-        results=data["results"], engines_on=set(chosen), all_engines=ENGINES,
+        results=data["results"], engines_on=set(chosen), all_engines=pool,
         time_range=time_range, ss=ss_cur, theme=theme,
         cached_age=data["cached_age"], impression_id=impression_id,
-        reps=data.get("reps"), new_tab=_cookie(request, "newtab") == "1"))
+        reps=data.get("reps"), new_tab=_cookie(request, "newtab") == "1",
+        mode=mode))
+
+
+@app.get("/img")
+async def image_proxy(
+    u: str = Query(..., max_length=2048),
+    sig: str = Query(..., max_length=64),
+) -> Response:
+    """Same-origin thumbnail proxy. Requires both auth and a valid server HMAC."""
+    if not thumb_proxy.verify_sig(u, sig):
+        return Response("invalid signature", status_code=403, media_type="text/plain")
+    try:
+        body, media_type = await thumb_proxy.fetch_thumbnail(u)
+    except thumb_proxy.DisallowedTarget:
+        return Response("disallowed target", status_code=403, media_type="text/plain")
+    except thumb_proxy.ProxyError:
+        return Response("upstream image unavailable", status_code=502, media_type="text/plain")
+    return Response(
+        body,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=3600, immutable",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/preferences", response_class=HTMLResponse)
@@ -637,16 +700,19 @@ async def api_click(request: Request) -> JSONResponse:
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
     return {"ok": True, "version": __version__,
-            "engines": [s.name for s in ENGINES], "cache": cache.stats(),
+            "engines": [s.name for s in ENGINES],
+            "image_engines": [s.name for s in ENGINES if s.image_fn is not None],
+            "cache": cache.stats(),
             "datasets": {"smallweb": smallweb.size(), "bangs": bangs.size()}}
 
 
 @app.get("/api/search")
 async def api_search(request: Request, q: str = Query(..., min_length=1, max_length=512),
                      page: int = Query(1, ge=1, le=20),
-                     limit: int = Query(10, ge=1, le=50),
+                     limit: int | None = Query(None, ge=1, le=50),
                      time: str | None = None, ss: str | None = None,
                      engines: str | None = None,
+                     tab: str = Query("web"),
                      nocache: int = Query(0),
                      rank: str = Query("v1"),
                      explain: int = Query(0)) -> JSONResponse:
@@ -657,13 +723,35 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
     if bang:
         return JSONResponse({"query": q, "bang": bang, "results": [],
                              "took_ms": 0, "unique": 0, "raw": 0})
-    chosen = _pick_engines(request, engines)
+    mode = "images" if tab == "images" else "web"
+    pool = [s for s in ENGINES if s.image_fn is not None] if mode == "images" else ENGINES
+    chosen = _pick_engines(request, engines, pool=pool)
+    per = limit or (IMAGE_PER_DEFAULT if mode == "images" else 10)
     ss_cur, _, time_range = _prefs(request, ss, None, time)
-    data = await search(q, chosen, page, limit, ss_cur, time_range,
+    data = await search(q, chosen, page, per, ss_cur, time_range,
                         use_cache=not nocache, ranker=rank,
-                        deep_policy=_cookie(request, "deep", "auto"))
+                        deep_policy=_cookie(request, "deep", "auto"),
+                        mode=mode)
+    rows = []
+    for h in data["window"]:
+        item: dict[str, Any] = {
+            "title": h.title, "url": h.url, "snippet": h.snippet,
+            "engines": h.engines, "agreement": h.agreement,
+            "score": round(h.score, 5), "published": h.published,
+        }
+        if mode == "images":
+            item.update({
+                "domain": h.domain,
+                "image_url": h.image_url,
+                "thumb_url": h.thumb_url,
+                "proxy_thumb_url": thumb_proxy.proxy_path(h.thumb_url or h.image_url),
+                "width": h.width,
+                "height": h.height,
+            })
+        rows.append(item)
     return JSONResponse({
         "query": q,
+        "mode": mode,
         "took_ms": int(data["elapsed"] * 1000),
         "cached_age_s": round(data["cached_age"], 1) if data["cached_age"] is not None else None,
         "unique": len(data["merged"]),
@@ -672,15 +760,12 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
         "engines": [{"name": r.name, "ok": r.ok, "count": len(r.hits), "ms": r.ms,
                      "error": r.error, "cost_usd": r.cost_usd,
                      "skipped": r.skipped} for r in data["results"]],
-        "results": [{"title": h.title, "url": h.url, "snippet": h.snippet,
-                     "engines": h.engines, "agreement": h.agreement,
-                     "score": round(h.score, 5), "published": h.published}
-                    for h in data["window"]],
-        "ranker": rank,
+        "results": rows,
+        "ranker": "rrf-images" if mode == "images" else rank,
         "ranked_all": [
             {"rank": i, "title": r.hit.title, "url": r.hit.url,
              "score": round(r.score, 5),
-             **({"features": r.features.as_dict()} if explain else {})}
+             **({"features": r.features.as_dict()} if explain and r.features else {})}
             for i, r in enumerate(data["ranked"], start=1)],
     })
 

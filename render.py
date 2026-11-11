@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlsplit
 from _version import __version__ as VERSION
 from merge import MergedHit
 from providers import EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT, RECOMMENDED_NOTE, Spec
+import thumb_proxy
 
 TIME_LABELS = (("any", "Any time"), ("day", "Past day"), ("week", "Past week"),
                ("month", "Past month"), ("year", "Past year"))
@@ -70,10 +71,16 @@ html[data-theme="dark"] .prefs button{color:#0b0d10}
 .brand span{color:var(--accent)}
 .home .brand .mk{width:1em;height:1em}
 header.top{border-bottom:1px solid var(--line);padding:14px 0}
+header.top.has-tabs{padding-bottom:0}
 header.top .inner{display:flex;gap:18px;align-items:center}
 header.top form.search{flex:1}
 header.top .nav{display:flex;gap:14px;font-size:13px;color:var(--muted);white-space:nowrap}
 header.top .nav a{color:var(--muted)}
+.tabs{display:flex;gap:22px;margin-top:10px;font-size:13.5px}
+.tabs a{padding:4px 2px 9px;color:var(--muted);border-bottom:2px solid transparent;
+  margin-bottom:-1px;font-weight:500;text-decoration:none}
+.tabs a:hover{color:var(--fg);text-decoration:none}
+.tabs a.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .home{padding:16vh 0 0;text-align:center}
 .home .brand{font-size:38px;display:block;margin-bottom:6px}
 .home .tag{color:var(--muted);font-size:14px;margin-bottom:26px}
@@ -131,20 +138,16 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 .meta .refresh{color:var(--muted);text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--muted) 55%,transparent);
   text-underline-offset:2px;font-size:12px}
-/* one swipeable strip; the sticky fade is the affordance that there is more to the right */
-.filters{position:relative;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;
-  -webkit-overflow-scrolling:touch;display:flex;gap:0;align-items:center;
-  margin:8px 0 14px;padding-bottom:12px;border-bottom:1px solid var(--line);font-size:13px}
-.filters::-webkit-scrollbar{display:none}
-.filters::after{content:"";position:sticky;right:0;flex:0 0 30px;align-self:stretch;
-  margin-left:-30px;pointer-events:none;
-  background:linear-gradient(to right,color-mix(in srgb,var(--bg) 0%,transparent),var(--bg))}
-.fgroup{display:flex;align-items:center;gap:6px;margin-right:16px;flex:0 0 auto}
-.fgroup .strip{display:flex;flex-wrap:nowrap;gap:4px;align-items:center}
-.fgroup:last-child{margin-right:0}
-.filters .lbl{color:var(--fg);opacity:.55;margin-right:4px;font-size:12px;
-  text-transform:uppercase;letter-spacing:.04em}
-.filters a{padding:4px 10px;border-radius:14px;color:var(--muted);
+/* desktop wraps when all 9 web engines are configured so mouse users can reach
+   every chip; phones switch to a single swipeable strip below 640px */
+.filters{position:relative;display:flex;gap:6px 14px;align-items:center;
+  flex-wrap:wrap;margin:8px 0 14px;padding-bottom:11px;
+  border-bottom:1px solid var(--line);font-size:13px}
+.fgroup{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+.fgroup .strip{display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.filters .lbl{color:var(--fg);opacity:.55;margin-right:3px;font-size:11.5px;
+  line-height:1;text-transform:uppercase;letter-spacing:.04em}
+.filters a{padding:4px 9px;border-radius:14px;color:var(--muted);
   border:1px solid transparent}
 .filters a:hover{background:var(--chip);text-decoration:none}
 .filters a.on{background:var(--chip);color:var(--fg);font-weight:600;
@@ -173,6 +176,27 @@ article.res p{margin:0;color:var(--fg);opacity:.9;font-size:14.5px;line-height:1
 html[data-theme="dark"] .flag[data-cat="ads"],
 html[data-theme="dark"] .flag[data-cat="suspicious"]{color:#e0a458}
 .dupes{font-size:11.5px;color:var(--muted);margin-top:6px}
+.igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));
+  gap:16px 14px;margin:12px 0 8px}
+.ires{margin:0;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ithumb{position:relative;display:block;aspect-ratio:4/3;border-radius:10px;
+  overflow:hidden;background:var(--chip);border:1px solid var(--line)}
+.ithumb img{width:100%;height:100%;object-fit:cover;display:block;
+  transition:transform .16s ease}
+.ithumb:hover img{transform:scale(1.02)}
+.idim{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:5px;
+  background:rgba(15,17,21,.72);color:#f3f5f8;font-size:10.5px;line-height:1.45;
+  font-variant-numeric:tabular-nums;pointer-events:none}
+.icap{min-width:0;display:flex;flex-direction:column;gap:2px}
+.ititle{font-size:13px;font-weight:500;line-height:1.35;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ititle:hover{color:var(--link)}
+.imeta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);min-width:0}
+.imeta .dom{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.iagree{color:var(--ok);font-weight:600;font-size:11px;flex:0 0 auto}
+.ifull{margin-left:auto;flex:0 0 auto;color:var(--muted);font-size:11px;
+  padding:1px 6px;border:1px solid var(--line);border-radius:6px;text-decoration:none}
+.ifull:hover{color:var(--fg);border-color:var(--accent);text-decoration:none}
 .pages{display:flex;gap:10px;justify-content:space-between;align-items:center;
   margin:26px 0 12px;font-size:14px}
 .pages a,.pages span{padding:8px 14px;border-radius:8px;border:1px solid var(--line)}
@@ -202,7 +226,10 @@ footer a{color:var(--muted)}
      single row is 637px wide at a 390px viewport, which pushed the nav links
      off-screen entirely. */
   header.top{padding:10px 0 12px}
+  header.top.has-tabs{padding-bottom:0}
   header.top .inner{flex-wrap:wrap;gap:8px 12px;align-items:center}
+  .tabs{margin-top:8px;gap:22px}
+  .tabs a{padding:6px 2px 9px;min-height:34px;display:inline-flex;align-items:center}
   header.top .brand{order:1;font-size:18px}
   header.top .nav{order:2;margin-left:auto;gap:18px;font-size:13px}
   header.top .nav a{padding:6px 0}
@@ -216,10 +243,16 @@ footer a{color:var(--muted)}
   .diag .dtxt{display:none}
   /* one strip for both filter groups: the container scrolls, so the two groups
      stay on the same line instead of each taking a row of its own */
-  .filters{margin:6px 0 12px;padding-bottom:4px}
+  .filters{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;gap:0;margin:6px 0 12px;padding-bottom:6px}
+  .filters::-webkit-scrollbar{display:none}
+  .filters::after{content:"";position:sticky;right:0;flex:0 0 32px;align-self:stretch;
+    margin-left:-32px;pointer-events:none;
+    background:linear-gradient(to right,color-mix(in srgb,var(--bg) 0%,transparent),var(--bg))}
   .fgroup{margin-right:12px;gap:5px}
+  .fgroup:last-child{margin-right:0}
   .fgroup .lbl{flex:0 0 auto;margin:0;font-size:10.5px}
-  .fgroup .strip{overflow:visible;flex:0 0 auto}
+  .fgroup .strip{overflow:visible;flex:0 0 auto;flex-wrap:nowrap;gap:4px}
   .filters a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:34px;
     padding:0 11px;font-size:13px}
   article.res{padding:15px 0 16px}
@@ -228,6 +261,10 @@ footer a{color:var(--muted)}
     overflow:hidden}
   .src{font-size:12px}
   .e{font-size:10px}
+  .igrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 10px}
+  .ithumb{border-radius:8px}
+  .ititle{font-size:12.5px}
+  .ifull{padding:2px 7px;min-height:24px;display:inline-flex;align-items:center}
   .pages{gap:8px;margin:22px 0 8px}
   .pages a,.pages span{min-width:40px;min-height:40px;display:inline-flex;
     align-items:center;justify-content:center;padding:0 10px}
@@ -325,10 +362,11 @@ def _engine_pill(spec: Spec) -> str:
             f'{escape(spec.label)}</span>')
 
 
-def _search_form(q: str) -> str:
+def _search_form(q: str, mode: str = "web") -> str:
     # The submit stays a real button so Enter and keyboard users work with JS off;
     # it is just drawn inside the field as a magnifier.
-    return f"""<form class="search" action="/search" method="get" role="search">
+    tab_input = '<input type="hidden" name="tab" value="images">' if mode == "images" else ""
+    return f"""<form class="search" action="/search" method="get" role="search">{tab_input}
   <div class="sb">
     <input type="search" name="q" value="{escape(q)}" placeholder="Search, or !bang a site"
            autocomplete="off" spellcheck="false" aria-label="Search query">
@@ -339,6 +377,30 @@ def _search_form(q: str) -> str:
     </button>
   </div>
 </form>"""
+
+
+def _tabs(q: str, time_range: str, ss: str, mode: str = "web") -> str:
+    """Primary Web / Images mode switcher.
+
+    Switching tabs intentionally drops per-tab `engines` and `per` overrides so
+    moving from Images back to Web restores the user's full web engine set.
+    """
+    def href(target: str) -> str:
+        params: dict[str, str] = {"q": q}
+        if target == "images":
+            params["tab"] = "images"
+        if time_range and time_range != "any":
+            params["time"] = time_range
+        if ss and ss != "moderate":
+            params["ss"] = ss
+        return "/search?" + urlencode(params)
+
+    web_cur = ' class="on" aria-current="page"' if mode != "images" else ""
+    img_cur = ' class="on" aria-current="page"' if mode == "images" else ""
+    return (f'<nav class="tabs" aria-label="Search type">'
+            f'<a{web_cur} href="{escape(href("web"))}">Web</a>'
+            f'<a{img_cur} href="{escape(href("images"))}">Images</a>'
+            f'</nav>')
 
 
 def home(enabled: list[Spec], configured: list[Spec], theme: str = "") -> str:
@@ -362,10 +424,16 @@ def home(enabled: list[Spec], configured: list[Spec], theme: str = "") -> str:
 
 
 def _filters(q: str, engines_on: set[str], all_engines: list[Spec],
-             time_range: str, ss: str, per: int) -> str:
+             time_range: str, ss: str, per: int, mode: str = "web") -> str:
     def base(**over):
-        params = {"q": q, "engines": ",".join(sorted(engines_on)), "time": time_range,
-                  "ss": ss, "per": per}
+        params: dict[str, object] = {
+            "q": q,
+            "tab": "images" if mode == "images" else "",
+            "engines": ",".join(sorted(engines_on)),
+            "time": time_range,
+            "ss": ss,
+            "per": per,
+        }
         params.update(over)
         return "/search?" + urlencode({k: v for k, v in params.items() if v})
 
@@ -431,6 +499,39 @@ def _result(hit: MergedHit, engines: dict[str, Spec], position: int = 0,
 </article>"""
 
 
+def _image_result(hit: MergedHit, engines: dict[str, Spec],
+                  rep=None, new_tab: bool = False) -> str:
+    src = thumb_proxy.proxy_path(hit.thumb_url or hit.image_url)
+    if not src:
+        return ""
+    order = {s.name: i for i, s in enumerate(engines.values())}
+    names = [engines[e].label for e in sorted(hit.engines, key=lambda n: order.get(n, 99))
+             if e in engines]
+    prov = "Found by " + " · ".join(names) if names else ""
+    agree = (f'<span class="iagree" title="{escape(prov)}">{len(names)}×</span>'
+             if len(names) > 1 else "")
+    dim = (f'<span class="idim">{hit.width}×{hit.height}</span>'
+           if hit.width and hit.height else "")
+    page_href = _safe_href(hit.url)
+    full_href = _safe_href(hit.image_url or hit.url)
+    target = ' target="_blank"' if new_tab else ""
+    prov_attr = f' title="{escape(prov)}"' if prov else ""
+    return f"""<figure class="ires"{prov_attr}>
+  <a class="ithumb" href="{escape(page_href)}" rel="noopener"{target}>
+    <img src="{escape(src)}" alt="{escape(hit.title)}" loading="lazy" decoding="async">
+    {dim}
+  </a>
+  <figcaption class="icap">
+    <a class="ititle" href="{escape(page_href)}" rel="noopener"{target}>{escape(hit.title)}</a>
+    <div class="imeta">
+      <span class="dom">{escape(hit.domain)}</span>{_flag(rep)}{agree}
+      <a class="ifull" href="{escape(full_href)}" target="_blank" rel="noopener"
+         aria-label="Open full image from {escape(hit.domain)}">Full</a>
+    </div>
+  </figcaption>
+</figure>"""
+
+
 def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                  total_unique: int, elapsed: float, results: list[EngineResult],
                  engines_on: set[str], all_engines: list[Spec], time_range: str,
@@ -438,7 +539,8 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
                  cached_age: float | None = None,
                  impression_id: str = "",
                  reps: dict | None = None,
-                 new_tab: bool = False) -> str:
+                 new_tab: bool = False,
+                 mode: str = "web") -> str:
     by_name = {s.name: s for s in all_engines}
     failed = [r for r in results if not r.ok and r.error and r.error != "no key"]
     ok = [r for r in results if r.ok]
@@ -457,8 +559,10 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
         timing = f'<span>{elapsed:.2f}s</span>'
     else:
         age = "just now" if cached_age < 10 else f"{_human_age(cached_age)} ago"
-        timing = f'<span class="hit">cached {age}</span>' 
-    count_plain = f"{total_unique:,} results"
+        timing = f'<span class="hit">cached {age}</span>'
+    unit = ("image" if total_unique == 1 else "images") if mode == "images" else (
+        "result" if total_unique == 1 else "results")
+    count_plain = f"{total_unique:,} {unit}"
     answer_hint = answered
 
     pager_bits = []
@@ -466,17 +570,27 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
         pager_bits.append(f"page {page}")
     pager_bits.append(
         f'<a class="refresh" href="'
-        f'{escape(_page_url(q, page, engines_on, time_range, ss, per) + chr(38) + "nocache=1")}" '
+        f'{escape(_page_url(q, page, engines_on, time_range, ss, per, mode) + chr(38) + "nocache=1")}" '
         f'title="Search the engines again instead of using the cache">↻ refresh</a>')
     pager_html = f'<span class="pager">{" · ".join(pager_bits)}</span>'
 
     reps = reps or {}
-    body_hits = "".join(_result(h, by_name, (page - 1) * per + i, reps.get(h.domain),
-                                new_tab)
-                        for i, h in enumerate(hits, start=1))
-    if not hits:
-        body_hits = (f'<div class="none">No results for <b>{escape(q)}</b>. '
-                     f'Try fewer words or a wider time range.</div>')
+    if mode == "images":
+        tiles = "".join(_image_result(h, by_name, reps.get(h.domain), new_tab)
+                        for h in hits)
+        body_hits = f'<div class="igrid">{tiles}</div>' if tiles else ""
+    else:
+        body_hits = "".join(_result(h, by_name, (page - 1) * per + i, reps.get(h.domain),
+                                    new_tab)
+                            for i, h in enumerate(hits, start=1))
+    if not body_hits:
+        if mode == "images" and not all_engines:
+            body_hits = ('<div class="none">No image-capable engines are configured. '
+                         '<a href="/settings/keys">Add a Brave or Serper key</a>.</div>')
+        else:
+            kind = "images" if mode == "images" else "results"
+            body_hits = (f'<div class="none">No {kind} for <b>{escape(q)}</b>. '
+                         f'Try fewer words or a wider time range.</div>')
 
     # pagination
     # three parts: previous, the number strip, next. Phones drop the strip and keep
@@ -486,25 +600,25 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
     if hits or page > 1:
         if page > 1:
             prev_link = (f'<a class="side" rel="prev" href="'
-                         f'{escape(_page_url(q, page - 1, engines_on, time_range, ss, per))}">← Previous</a>')
+                         f'{escape(_page_url(q, page - 1, engines_on, time_range, ss, per, mode))}">← Previous</a>')
         for p in range(max(1, page - 2), page + 3):
             if p == page:
                 nums.append(f'<span class="cur">{p}</span>')
             elif p == 1 or p <= page + 2:
-                nums.append(f'<a href="{escape(_page_url(q, p, engines_on, time_range, ss, per))}">{p}</a>')
+                nums.append(f'<a href="{escape(_page_url(q, p, engines_on, time_range, ss, per, mode))}">{p}</a>')
         if len(hits) == per:
             next_link = (f'<a class="side" rel="next" href="'
-                         f'{escape(_page_url(q, page + 1, engines_on, time_range, ss, per))}">Next →</a>')
+                         f'{escape(_page_url(q, page + 1, engines_on, time_range, ss, per, mode))}">Next →</a>')
     pages = ([prev_link or '<span class="side gap"></span>'],
              [f'<span class="nums">{"".join(nums)}</span>',
               f'<span class="pos">page {page}</span>'],
              [next_link or '<span class="side gap"></span>'])
 
-    body = f"""<header class="top"><div class="wrap inner">
+    body = f"""<header class="top has-tabs"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>
-  {_search_form(q)}
+  {_search_form(q, mode)}
   <div class="nav"><a href="/preferences">Preferences</a><a href="/about">About</a><a href="/logout">Log out</a></div>
-</div></header>
+</div><div class="wrap">{_tabs(q, time_range, ss, mode)}</div></header>
 <div class="wrap">
   <div class="status">
     <span class="count">{count_plain}</span>
@@ -516,12 +630,12 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
         <div class="diaglinks">{pager_html}
           {_report_link(q, hits, page=page, per=per, results=results, engines_on=engines_on,
                         time_range=time_range, ss=ss, cached_age=cached_age,
-                        labels={s.name: s.label for s in all_engines})}</div>
+                        labels={s.name: s.label for s in all_engines}, mode=mode)}</div>
       </div>
     </details>
   </div>
   {fail_box}
-  {_filters(q, engines_on, all_engines, time_range, ss, per)}
+  {_filters(q, engines_on, all_engines, time_range, ss, per, mode)}
   {body_hits}
   <nav class="pages" aria-label="Result pages">{''.join(pages[0] + pages[1] + pages[2])}</nav>
   <footer><span>trivet</span><span>{len(all_engines)} engines available</span>
@@ -567,10 +681,17 @@ def _human_age(seconds: float) -> str:
     return f"{int(seconds // 86400)}d"
 
 
-def _page_url(q, page, engines_on, time_range, ss, per) -> str:
-    return "/search?" + urlencode({
-        "q": q, "page": page, "engines": ",".join(sorted(engines_on)),
-        "time": time_range, "ss": ss, "per": per})
+def _page_url(q, page, engines_on, time_range, ss, per, mode: str = "web") -> str:
+    params: dict[str, object] = {
+        "q": q,
+        "tab": "images" if mode == "images" else "",
+        "page": page,
+        "engines": ",".join(sorted(engines_on)),
+        "time": time_range,
+        "ss": ss,
+        "per": per,
+    }
+    return "/search?" + urlencode({k: v for k, v in params.items() if v})
 
 
 def login(next_path: str = "/", error: str = "") -> str:
@@ -631,7 +752,8 @@ def _report_json(hits: list, limit: int) -> str:
 def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
                engines_on: set[str], time_range: str, ss: str,
                cached_age: float | None = None, repo: str | None = None,
-               labels: dict[str, str] | None = None) -> str:
+               labels: dict[str, str] | None = None,
+               mode: str = "web") -> str:
     """Prefilled GitHub issue: the query plus a JSON dump of what was shown.
 
     A URL has a practical length limit, so the dump shrinks (10 → 6 → 3 → 1 results)
@@ -639,13 +761,15 @@ def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
     """
     repo = repo or REPO
     base = f"https://github.com/{repo}/issues/new"
-    title = f"Search results problem: {q[:110]}"
+    prefix = "Image search problem" if mode == "images" else "Search results problem"
+    title = f"{prefix}: {q[:110]}"
     label = labels or {}
     engines = ", ".join(sorted(label.get(e, e) for e in engines_on)) or "none"
     timings = " · ".join(
         f"{label.get(r.name, r.name)}{'' if r.ok else ' (failed)'} {r.ms}ms"
         for r in results) or "n/a"
-    view = (f"page {page}, {per} per page, {time_range}, safesearch {ss}"
+    mode_tag = f"{mode}, " if mode != "web" else ""
+    view = (f"{mode_tag}page {page}, {per} per page, {time_range}, safesearch {ss}"
             + (f", served from cache ({int(cached_age)}s old)" if cached_age else ""))
     header = (
         f"**Query:** `{q}`\n\n"
@@ -693,65 +817,6 @@ def _timings_grid(results: list, cached_age: float | None,
     note = "timings from the original fetch" if cached_age is not None else ""
     return ('<div class="tgrid">' + "".join(rows) +
             (f'<div class="tnote">{note}</div>' if note else "") + "</div>")
-
-
-def _report_json(hits: list, limit: int) -> str:
-    rows = []
-    for i, h in enumerate(hits[:limit], start=1):
-        rows.append({
-            "pos": i,
-            "title": (h.title or "")[:120],
-            "url": (h.url or "")[:220],
-            "engines": list(h.engines or []),
-            "score": round(float(getattr(h, "score", 0.0) or 0.0), 3),
-        })
-    return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-
-
-def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
-               engines_on: set[str], time_range: str, ss: str,
-               cached_age: float | None = None, repo: str | None = None,
-               labels: dict[str, str] | None = None) -> str:
-    """Prefilled GitHub issue: the query plus a JSON dump of what was shown.
-
-    A URL has a practical length limit, so the dump shrinks (10 → 6 → 3 → 1 results)
-    until it fits, and says so when it was cut. The query always survives.
-    """
-    repo = repo or REPO
-    base = f"https://github.com/{repo}/issues/new"
-    title = f"Search results problem: {q[:110]}"
-    label = labels or {}
-    engines = ", ".join(sorted(label.get(e, e) for e in engines_on)) or "none"
-    timings = " · ".join(
-        f"{label.get(r.name, r.name)}{'' if r.ok else ' (failed)'} {r.ms}ms"
-        for r in results) or "n/a"
-    view = (f"page {page}, {per} per page, {time_range}, safesearch {ss}"
-            + (f", served from cache ({int(cached_age)}s old)" if cached_age else ""))
-    header = (
-        f"**Query:** `{q}`\n\n"
-        f"**When:** {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
-        f"**Trivet:** {VERSION}\n"
-        f"**Engines:** {engines}\n"
-        f"**Timings:** {timings}\n"
-        f"**View:** {view}\n\n"
-        "### What went wrong?\n\n"
-        "<!-- e.g. \"the answer is the 4th result\", \"these are all SEO spam\", "
-        "\"this is the wrong version\" -->\n")
-    for limit in (10, 6, 3, 1):
-        cut = f"\n_(cut to {limit} of {len(hits)} results to fit in a URL)_" if len(hits) > limit else ""
-        body = f"{header}\n### Results\n\n```json\n{_report_json(hits, limit)}\n```\n{cut}\n"
-        url = f"{base}?{urlencode({'title': title, 'body': body})}"
-        if len(url) <= ISSUE_URL_LIMIT:
-            return url
-    # even one result did not fit: keep the context, drop the dump
-    body = header + "\n### Results\n\n_(too long to fit in a link - paste them here)_\n"
-    return f"{base}?{urlencode({'title': title, 'body': body})}"
-
-
-def _report_link(q: str, hits: list, **kw) -> str:
-    url = _issue_url(q, hits, **kw)
-    return (f'<a class="report" href="{escape(url)}" target="_blank" rel="noopener">'
-            f'Report a problem with these results</a>')
 
 
 def _timings_line(results: list, cached_age: float | None,
@@ -1074,9 +1139,19 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
 
 
 def about(engines: list[Spec], theme: str = "") -> str:
+    def caps(s: Spec) -> str:
+        bits = []
+        if s.image_fn is not None:
+            bits.append("images")
+        if s.time_range:
+            bits.append("time filter")
+        if s.safesearch:
+            bits.append("safe search")
+        return ", ".join(bits) if bits else "—"
+
     rows = "".join(
         f"<tr><td><b>{escape(s.label)}</b></td><td>{escape(s.blurb)}</td>"
-        f"<td>{'time filter, safe search' if s.time_range and s.safesearch else 'time filter' if s.time_range else '—'}</td></tr>"
+        f"<td>{escape(caps(s))}</td></tr>"
         for s in engines)
     body = f"""<header class="top"><div class="wrap inner">
   <a class="brand" href="/"><svg class="mk" viewBox="0 0 512 512" aria-hidden="true"><path d="M96 112H416L384 160H128Z"/><path d="M128 160H176L164 400H120Z"/><path d="M232 160H280L276 400H236Z"/><path d="M336 160H384L392 400H348Z"/></svg>trivet</a>

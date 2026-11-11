@@ -55,11 +55,11 @@ def normalize_query(query: str) -> str:
 
 
 def make_key(query: str, engines: list[str], time_range: str, safesearch: str,
-             depth: int, deep_policy: str = "auto") -> str:
-    # deep_policy changes what actually ran, so it has to change the key: otherwise
-    # an "always" request is served a cached page that skipped the deep engine
+             depth: int, deep_policy: str = "auto", mode: str = "web") -> str:
+    # deep_policy and mode change what actually ran, so both belong in the key:
+    # otherwise switching tabs or policies replays the wrong result shape
     raw = json.dumps([normalize_query(query), sorted(engines), time_range, safesearch,
-                      depth, deep_policy])
+                      depth, deep_policy, mode])
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

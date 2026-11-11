@@ -80,6 +80,10 @@ class MergedHit:
     # per-engine provenance: [{"e": engine, "r": rank, "s": native score or None}]
     # ranking.py needs the ranks to separate "one engine loved it" from "everyone liked it"
     sources: list[dict] = field(default_factory=list)
+    image_url: str = ""
+    thumb_url: str = ""
+    width: int = 0
+    height: int = 0
 
     @property
     def agreement(self) -> int:
@@ -109,8 +113,9 @@ def merge(results: list[EngineResult], k: int = 60,
             continue
         w = weights.get(res.name, 1.0)
         for hit in res.hits:
-            key = canonical_url(hit.url)
-            if collapse_syndicated and key not in by_key:
+            identity = hit.image_url or hit.url
+            key = canonical_url(identity)
+            if collapse_syndicated and not hit.image_url and key not in by_key:
                 tokens = _title_tokens(hit.title)
                 for cluster_tokens, cluster_key in clusters:
                     if _similar(tokens, cluster_tokens):
@@ -121,10 +126,20 @@ def merge(results: list[EngineResult], k: int = 60,
             entry = by_key.get(key)
             if entry is None:
                 entry = MergedHit(title=hit.title, url=hit.url, snippet=hit.snippet,
-                                  published=hit.published)
+                                  published=hit.published, image_url=hit.image_url,
+                                  thumb_url=hit.thumb_url, width=hit.width,
+                                  height=hit.height)
                 by_key[key] = entry
-            elif entry.url != hit.url and hit.url not in entry.duplicates:
-                entry.duplicates.append(hit.url)
+            else:
+                cur_id = entry.image_url or entry.url
+                if cur_id != identity and identity not in entry.duplicates:
+                    entry.duplicates.append(identity)
+                # Prefer a dedicated CDN thumbnail over an origin-image fallback.
+                if hit.thumb_url and (not entry.thumb_url or entry.thumb_url == entry.image_url):
+                    if hit.thumb_url != hit.image_url or not entry.thumb_url:
+                        entry.thumb_url = hit.thumb_url
+                if not entry.width and hit.width:
+                    entry.width, entry.height = hit.width, hit.height
             if res.name not in entry.engines:
                 entry.engines.append(res.name)
             entry.sources.append({"e": res.name, "r": hit.rank, "s": hit.score})
@@ -149,7 +164,7 @@ def engine_consensus(results: list[EngineResult]) -> dict[str, float]:
     ok = [r for r in results if r.ok and r.hits]
     if len(ok) < 2:
         return {}
-    keys = {r.name: {canonical_url(h.url) for h in r.hits} for r in ok}
+    keys = {r.name: {canonical_url(h.image_url or h.url) for h in r.hits} for r in ok}
     out = {}
     for name, mine in keys.items():
         others = set().union(*[v for n, v in keys.items() if n != name])

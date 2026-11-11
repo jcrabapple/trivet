@@ -135,6 +135,10 @@ class Hit:
     rank: int = 0
     score: float | None = None
     published: str | None = None
+    image_url: str = ""
+    thumb_url: str = ""
+    width: int = 0
+    height: int = 0
 
 
 @dataclass
@@ -204,6 +208,38 @@ def _hits(items, engine: str, *, url_key="url", title_key="title",
             published=it.get(published_key) if published_key else None,
         ))
     return out
+
+
+def _pos_int(val: Any) -> int:
+    try:
+        n = int(val)
+        return n if n > 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _image_hit(rank: int, engine: str, *, title: Any, page_url: Any,
+               image_url: Any, thumb_url: Any = None,
+               width: Any = 0, height: Any = 0) -> Hit | None:
+    img = str(image_url or "").strip()
+    if not img.lower().startswith(_ALLOWED_SCHEMES):
+        return None
+    thumb = str(thumb_url or img).strip()
+    if not thumb.lower().startswith(_ALLOWED_SCHEMES):
+        thumb = img
+    page = str(page_url or img).strip()
+    if not page.lower().startswith(_ALLOWED_SCHEMES):
+        page = img
+    return Hit(
+        title=_clean(title or page, 160),
+        url=page,
+        engine=engine,
+        rank=rank,
+        image_url=img,
+        thumb_url=thumb,
+        width=_pos_int(width),
+        height=_pos_int(height),
+    )
 
 
 # ------------------------------------------------------------------- adapters
@@ -323,6 +359,95 @@ async def firecrawl(client, query, limit, key, opts: QueryOpts):
     return _hits(data, "firecrawl"), None
 
 
+# ------------------------------------------------------------ image adapters
+async def brave_images(client, query, limit, key, opts: QueryOpts):
+    params: dict[str, Any] = {"q": query, "count": min(limit, 100)}
+    freshness = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}.get(opts.time_range)
+    if freshness:
+        params["freshness"] = freshness
+    # Brave's image endpoint rejects safesearch="moderate" with HTTP 422; only
+    # "off" and "strict" exist in its enum.
+    params["safesearch"] = "off" if opts.safesearch == "off" else "strict"
+    r = await client.get("https://api.search.brave.com/res/v1/images/search",
+                         headers={"X-Subscription-Token": key, "Accept": "application/json"},
+                         params=params)
+    r.raise_for_status()
+    out: list[Hit] = []
+    for i, it in enumerate(r.json().get("results") or [], start=1):
+        if not isinstance(it, dict):
+            continue
+        props = it.get("properties") or {}
+        thumb = it.get("thumbnail") or {}
+        h = _image_hit(
+            len(out) + 1, "brave",
+            title=it.get("title"),
+            page_url=it.get("url"),
+            image_url=props.get("url"),
+            thumb_url=thumb.get("src"),
+            width=props.get("width") or thumb.get("width"),
+            height=props.get("height") or thumb.get("height"),
+        )
+        if h:
+            out.append(h)
+    return out, None
+
+
+async def serper_images(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {"q": query, "num": min(limit, 100)}
+    tbs = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}.get(opts.time_range)
+    if tbs:
+        body["tbs"] = tbs
+    if opts.safesearch == "strict":
+        body["safe"] = "active"
+    r = await client.post("https://google.serper.dev/images",
+                          headers={"X-API-KEY": key}, json=body)
+    r.raise_for_status()
+    out: list[Hit] = []
+    for it in r.json().get("images") or []:
+        if not isinstance(it, dict):
+            continue
+        h = _image_hit(
+            len(out) + 1, "serper",
+            title=it.get("title"),
+            page_url=it.get("link"),
+            image_url=it.get("imageUrl"),
+            thumb_url=it.get("thumbnailUrl"),
+            width=it.get("imageWidth") or it.get("thumbnailWidth"),
+            height=it.get("imageHeight") or it.get("thumbnailHeight"),
+        )
+        if h:
+            out.append(h)
+    return out, None
+
+
+async def firecrawl_images(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {"query": query, "sources": ["images"], "limit": min(limit, 50)}
+    tbs = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}.get(opts.time_range)
+    if tbs:
+        body["tbs"] = tbs
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    r = await client.post("https://api.firecrawl.dev/v2/search",
+                          headers=headers, json=body)
+    r.raise_for_status()
+    data = r.json().get("data") or {}
+    items = data.get("images") if isinstance(data, dict) else []
+    out: list[Hit] = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        h = _image_hit(
+            len(out) + 1, "firecrawl",
+            title=it.get("title"),
+            page_url=it.get("url"),
+            image_url=it.get("imageUrl"),
+            width=it.get("imageWidth"),
+            height=it.get("imageHeight"),
+        )
+        if h:
+            out.append(h)
+    return out, None
+
+
 @dataclass(frozen=True)
 class Spec:
     name: str
@@ -335,6 +460,7 @@ class Spec:
     safesearch: bool = False
     min_interval: float = 0.0    # seconds between calls; some plans cap at 1 rps
     key_optional: bool = False   # endpoint answers without a key (unmetered today)
+    image_fn: Callable | None = None
 
 
 SPECS: tuple[Spec, ...] = (
@@ -346,7 +472,7 @@ SPECS: tuple[Spec, ...] = (
     # or a retyped query returns HTTP 429 and silently drops the engine.
     Spec("brave", "Brave", ("BRAVE_API_KEY",), brave, "fast",
          "independent crawl, own ranking", time_range=True, safesearch=True,
-         min_interval=1.1),
+         min_interval=1.1, image_fn=brave_images),
     Spec("valyu", "Valyu", ("VALYU_API_KEY",), valyu, "deep",
          "full page content, reports cost"),
     Spec("tavily", "Tavily", ("TAVILY_API_KEY",), tavily, "fast",
@@ -354,11 +480,13 @@ SPECS: tuple[Spec, ...] = (
     Spec("linkup", "Linkup", ("LINKUP_API_KEY",), linkup, "fast",
          "EU-hosted", time_range=True),
     Spec("serper", "Google (Serper)", ("SERPER_API_KEY",), serper, "fast",
-         "Google SERP reseller", time_range=True, safesearch=True),
+         "Google SERP reseller", time_range=True, safesearch=True,
+         image_fn=serper_images),
     # /v2/search answers without a key as of 2026-11-09 (measured ~0.9-1.4s, 5/5 queries);
     # a key raises the quota if they start metering it again
     Spec("firecrawl", "Firecrawl", ("FIRECRAWL_API_KEY",), firecrawl, "fast",
-         "crawl-and-extract index", time_range=True, key_optional=True),
+         "crawl-and-extract index", time_range=True, key_optional=True,
+         image_fn=firecrawl_images),
     Spec("parallel", "Parallel", ("PARALLEL_API_KEY",), parallel, "deep",
          "objective-driven search"),
 )
@@ -406,7 +534,10 @@ async def _respect_interval(name: str, min_interval: float) -> None:
 
 async def run_engine(client: httpx.AsyncClient, spec: Spec, query: str, limit: int,
                      env: dict[str, str], timeout: float,
-                     opts: QueryOpts) -> EngineResult:
+                     opts: QueryOpts, mode: str = "web") -> EngineResult:
+    fn = spec.image_fn if mode == "images" else spec.fn
+    if fn is None:
+        return EngineResult(spec.name, ok=True, skipped=True, ms=0)
     key = key_for(spec, env)
     if not key and not spec.key_optional:
         return EngineResult(spec.name, ok=False, error="no key")
@@ -414,7 +545,7 @@ async def run_engine(client: httpx.AsyncClient, spec: Spec, query: str, limit: i
     t0 = time.perf_counter()
     try:
         hits, cost = await asyncio.wait_for(
-            spec.fn(client, query, limit, key, opts), timeout=timeout)
+            fn(client, query, limit, key, opts), timeout=timeout)
         return EngineResult(spec.name, ok=True, hits=hits,
                             ms=int((time.perf_counter() - t0) * 1000), cost_usd=cost)
     except httpx.HTTPStatusError as e:

@@ -177,7 +177,11 @@ so an open instance is somebody else's free search engine.
 ## Features
 
 - **Server-rendered** — no build step, no framework in the browser, works with JS off.
-- **Bookmarkable everything** — query, page, engines, time filter, safe search, results per
+- **Image search with proxied thumbnails** — `/search?q=…&tab=images` fuses Brave, Google
+  (Serper) and Firecrawl image indexes, serving thumbnails through a signed same-origin
+  proxy (`/img`) so `img-src 'self' data:` stays intact and client IPs are not leaked to
+  third-party hosts.
+- **Bookmarkable everything** — query, tab, page, engines, time filter, safe search, results per
   page are all in the URL.
 - **Preferences** as cookies: engines by tier, theme, safe search, results per page,
   open-in-new-tab, deep-engine policy.
@@ -226,6 +230,7 @@ cloudflared tunnel route dns trivet trivet.example.com
 | `quality.py` | listicle detection by shape and publisher trust |
 | `reputation.py` | AdGuard lookups, local lists, host heuristics |
 | `render.py` | all HTML and CSS, server-side |
+| `thumb_proxy.py` | HMAC-signed, SSRF-checked raster thumbnail proxy (`/img`) |
 | `app.py` | routes, auth, cache, request pipeline |
 | `secrets_store.py` | encrypted API-key storage for the web UI |
 | `cache.py`, `feedback.py`, `stats.py` | SQLite: cache, impressions/clicks, timing history |

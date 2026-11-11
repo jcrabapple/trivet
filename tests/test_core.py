@@ -232,3 +232,154 @@ def test_rate_limit_trips_and_recovers(env):
         assert app._rate_ok("bucket")
     assert not app._rate_ok("bucket")
     assert app._rate_ok("other-bucket")
+
+
+# --------------------------------------------------- image search & thumb proxy
+def test_cache_key_separates_web_and_images(env):
+    cache = _fresh("cache")
+    web_k = cache.make_key("red panda", ["brave", "serper"], "any", "moderate", 24, "auto", "web")
+    img_k = cache.make_key("red panda", ["brave", "serper"], "any", "moderate", 24, "auto", "images")
+    assert web_k != img_k
+
+
+def test_thumb_proxy_signatures_are_bound_to_url_and_secret(env):
+    tp = _fresh("thumb_proxy")
+    url = "https://imgs.search.brave.com/example/thumb.jpg"
+    sig = tp.sign_url(url)
+    assert sig and tp.verify_sig(url, sig)
+    assert not tp.verify_sig(url + "?x=1", sig)
+    assert not tp.verify_sig(url, sig[:-1] + ("0" if sig[-1] != "0" else "1"))
+    assert tp.sign_url("javascript:alert(1)") == ""
+    assert tp.sign_url("file:///etc/passwd") == ""
+
+    env.setenv("TRIVET_SESSION_SECRET", "rotated-session-secret")
+    assert not tp.verify_sig(url, sig)
+
+
+def test_thumb_proxy_blocks_non_public_ips_and_svg(env):
+    import asyncio
+    tp = _fresh("thumb_proxy")
+    for blocked in ("127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.8",
+                    "172.16.5.4", "192.168.1.1", "100.64.0.1", "169.254.1.1",
+                    "0.0.0.0"):
+        assert not tp.is_public_ip(blocked), blocked
+    assert tp.is_public_ip("93.184.216.34")
+
+    with pytest.raises(tp.DisallowedTarget):
+        asyncio.run(tp._ensure_public_target("http://127.0.0.1:8952/healthz"))
+
+    # SVG and HTML must be rejected even if upstream lies about Content-Type.
+    assert tp.detect_raster_type("image/svg+xml", b"<svg onload=alert(1)>") is None
+    assert tp.detect_raster_type("image/png", b"<svg onload=alert(1)>") is None
+    assert tp.detect_raster_type("image/jpeg", b"<!doctype html><html>") is None
+    assert tp.detect_raster_type("application/octet-stream", b"\xff\xd8\xff\xe0jpeg") == "image/jpeg"
+    assert tp.detect_raster_type("image/png", b"\x89PNG\r\n\x1a\nxxxx") == "image/png"
+
+
+def test_thumb_proxy_blocks_redirect_to_loopback(env):
+    import asyncio
+    import httpx
+
+    tp = _fresh("thumb_proxy")
+    tp._LRU.clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1:8952/healthz"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    # Stub DNS for the first hop so the test stays offline; hop 2 hits literal loopback.
+    async def run():
+        orig = tp._ensure_public_target
+
+        async def fake_check(u: str):
+            if "public.example" in u:
+                return
+            await orig(u)
+
+        tp._ensure_public_target = fake_check
+        try:
+            with pytest.raises(tp.DisallowedTarget):
+                await tp.fetch_thumbnail("https://public.example/pic.jpg", client=client)
+        finally:
+            tp._ensure_public_target = orig
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_image_merge_dedupes_on_image_url_and_upgrades_thumbnail(env):
+    providers = _fresh("providers")
+    merge_mod = _fresh("merge")
+    r_firecrawl = providers.EngineResult("firecrawl", ok=True, hits=[
+        providers.Hit(title="Red Panda", url="https://zoo.example/gallery",
+                      image_url="https://zoo.example/img/1.jpg",
+                      thumb_url="https://zoo.example/img/1.jpg", engine="firecrawl", rank=1),
+        providers.Hit(title="Red Panda Two", url="https://zoo.example/gallery",
+                      image_url="https://zoo.example/img/2.jpg",
+                      thumb_url="https://zoo.example/img/2.jpg", engine="firecrawl", rank=2),
+    ])
+    r_serper = providers.EngineResult("serper", ok=True, hits=[
+        providers.Hit(title="Red Panda", url="https://mirror.example/post",
+                      image_url="https://zoo.example/img/1.jpg?utm_source=x",
+                      thumb_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:1",
+                      width=1600, height=1200, engine="serper", rank=1),
+    ])
+    merged = merge_mod.merge([r_firecrawl, r_serper])
+    assert len(merged) == 2                  # gallery page kept both distinct images
+    top = merged[0]
+    assert top.agreement == 2                # same image fused across engines
+    assert "gstatic.com" in top.thumb_url    # upgraded from origin image to CDN thumbnail
+    assert (top.width, top.height) == (1600, 1200)
+
+
+def test_image_results_page_uses_same_origin_proxy_urls(env):
+    providers = _fresh("providers")
+    merge_mod = _fresh("merge")
+    render = _fresh("render")
+    hit = merge_mod.MergedHit(
+        title="Red Panda",
+        url="https://safeworldwide.org/red-panda/",
+        image_url="https://safeworldwide.org/panda.jpg",
+        thumb_url="https://imgs.search.brave.com/thumb.jpg",
+        width=1200, height=800,
+        engines=["brave", "serper"], score=0.032, best_rank=1,
+    )
+    specs = [s for s in providers.SPECS if s.image_fn is not None]
+    html = render.results_page(
+        q="red panda", hits=[hit], page=1, per=24, total_unique=1, elapsed=0.42,
+        results=[_R("brave"), _R("serper")], engines_on={"brave", "serper"},
+        all_engines=specs, time_range="any", ss="moderate", mode="images",
+    )
+    assert 'src="/img?u=https%3A%2F%2Fimgs.search.brave.com%2Fthumb.jpg&amp;sig=' in html
+    assert 'src="https://' not in html       # strict CSP: no direct remote <img src>
+    assert "1 image" in html                 # singular grammar check
+    assert "1200×800" in html
+    assert 'href="/search?q=red+panda"' in html   # Web tab drops per-tab engine narrowing
+
+
+def test_img_route_requires_auth_and_valid_hmac(env, monkeypatch):
+    import base64
+    from fastapi.testclient import TestClient
+
+    tp = _fresh("thumb_proxy")
+    app_mod = _fresh("app")
+    client = TestClient(app_mod.app)
+    target = "https://imgs.search.brave.com/sample.jpg"
+    sig = tp.sign_url(target)
+
+    # Unauthenticated request redirects to login.
+    unauth = client.get(f"/img?u={target}&sig={sig}", follow_redirects=False)
+    assert unauth.status_code == 303
+
+    hdrs = {"Authorization": "Basic " + base64.b64encode(b"admin:hunter2").decode()}
+    bad = client.get(f"/img?u={target}&sig={'0' * 24}", headers=hdrs)
+    assert bad.status_code == 403
+
+    async def fake_fetch(url, client=None):
+        return b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg"
+
+    monkeypatch.setattr(app_mod.thumb_proxy, "fetch_thumbnail", fake_fetch)
+    good = client.get(f"/img?u={target}&sig={sig}", headers=hdrs)
+    assert good.status_code == 200
+    assert good.headers["content-type"] == "image/jpeg"
+    assert "sandbox" in good.headers["content-security-policy"]
