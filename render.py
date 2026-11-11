@@ -14,7 +14,8 @@ from urllib.parse import urlencode, urlsplit
 
 from _version import __version__ as VERSION
 from merge import MergedHit
-from providers import EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT, RECOMMENDED_NOTE, Spec
+from providers import (EngineResult, RECOMMENDED, RECOMMENDED_CAVEAT,
+                       RECOMMENDED_NOTE, Spec, fmt_news_age)
 import thumb_proxy
 
 TIME_LABELS = (("any", "Any time"), ("day", "Past day"), ("week", "Past week"),
@@ -156,7 +157,8 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 article.res{padding:17px 0 18px;border-bottom:1px solid var(--line)}
 article.res:last-of-type{border-bottom:0}
 .src{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted);margin-bottom:4px}
-.src .dom{color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.src .outlet{color:var(--fg);font-weight:500;white-space:nowrap;flex:0 0 auto}
+.src .dom{color:var(--muted);font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .src .date{margin-left:auto;white-space:nowrap;font-variant-numeric:tabular-nums}
 article.res h2{margin:0 0 5px;font-size:20px;font-weight:600;line-height:1.28;letter-spacing:-.005em}
 article.res h2 a{color:var(--link)}
@@ -303,8 +305,8 @@ def _fmt_date(raw: str | None) -> str:
     if not raw:
         return ""
     text = str(raw).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d",
-                "%B %d, %Y", "%b %d, %Y", "%d %b %Y"):
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y", "%d %b %Y"):
         try:
             return datetime.strptime(text, fmt).strftime("%d %b %Y")
         except ValueError:
@@ -365,7 +367,8 @@ def _engine_pill(spec: Spec) -> str:
 def _search_form(q: str, mode: str = "web") -> str:
     # The submit stays a real button so Enter and keyboard users work with JS off;
     # it is just drawn inside the field as a magnifier.
-    tab_input = '<input type="hidden" name="tab" value="images">' if mode == "images" else ""
+    tab_input = (f'<input type="hidden" name="tab" value="{escape(mode)}">'
+                 if mode in ("images", "news") else "")
     return f"""<form class="search" action="/search" method="get" role="search">{tab_input}
   <div class="sb">
     <input type="search" name="q" value="{escape(q)}" placeholder="Search, or !bang a site"
@@ -387,19 +390,20 @@ def _tabs(q: str, time_range: str, ss: str, mode: str = "web") -> str:
     """
     def href(target: str) -> str:
         params: dict[str, str] = {"q": q}
-        if target == "images":
-            params["tab"] = "images"
+        if target in ("images", "news"):
+            params["tab"] = target
         if time_range and time_range != "any":
             params["time"] = time_range
         if ss and ss != "moderate":
             params["ss"] = ss
         return "/search?" + urlencode(params)
 
-    web_cur = ' class="on" aria-current="page"' if mode != "images" else ""
-    img_cur = ' class="on" aria-current="page"' if mode == "images" else ""
+    def link(key: str, label: str) -> str:
+        cur = ' class="on" aria-current="page"' if mode == key else ""
+        return f'<a{cur} href="{escape(href(key))}">{label}</a>'
+
     return (f'<nav class="tabs" aria-label="Search type">'
-            f'<a{web_cur} href="{escape(href("web"))}">Web</a>'
-            f'<a{img_cur} href="{escape(href("images"))}">Images</a>'
+            f'{link("web", "Web")}{link("images", "Images")}{link("news", "News")}'
             f'</nav>')
 
 
@@ -428,7 +432,7 @@ def _filters(q: str, engines_on: set[str], all_engines: list[Spec],
     def base(**over):
         params: dict[str, object] = {
             "q": q,
-            "tab": "images" if mode == "images" else "",
+            "tab": mode if mode in ("images", "news") else "",
             "engines": ",".join(sorted(engines_on)),
             "time": time_range,
             "ss": ss,
@@ -477,8 +481,16 @@ def _flag(rep) -> str:
 
 
 def _result(hit: MergedHit, engines: dict[str, Spec], position: int = 0,
-            rep=None, new_tab: bool = False) -> str:
-    date = f' · {escape(_fmt_date(hit.published))}' if hit.published else ""
+            rep=None, new_tab: bool = False, mode: str = "web") -> str:
+    if mode == "news":
+        date = escape(fmt_news_age(hit.published)) if hit.published else ""
+    else:
+        date = f' · {escape(_fmt_date(hit.published))}' if hit.published else ""
+    if hit.source_name and hit.source_name.lower() != hit.domain.lower():
+        src_lead = (f'<span class="outlet">{escape(hit.source_name)}</span>'
+                    f'<span class="dom">{escape(hit.domain)}</span>')
+    else:
+        src_lead = f'<span class="dom">{escape(hit.domain)}</span>'
     # stable badge order (Spec order), so the same page always renders the same way
     order = {s.name: i for i, s in enumerate(engines.values())}
     names = [engines[e].label for e in sorted(hit.engines, key=lambda n: order.get(n, 99))
@@ -489,9 +501,9 @@ def _result(hit: MergedHit, engines: dict[str, Spec], position: int = 0,
     # saying otherwise reads as a broken duplicate to a human.
     dupe = ""
     if len(hit.duplicates) >= 2:
-        dupe = f'<div class="dupes">{len(hit.duplicates) + 1} URLs merged</div>' 
+        dupe = f'<div class="dupes">{len(hit.duplicates) + 1} URLs merged</div>'
     return f"""<article class="res">
-  <div class="src"><span class="dom">{escape(hit.domain)}</span><span class="date">{date}</span>{_flag(rep)}</div>
+  <div class="src">{src_lead}{_flag(rep)}<span class="date">{date}</span></div>
   <h2><a href="{escape(_safe_href(hit.url))}" rel="noopener"{' target="_blank"' if new_tab else ''} data-pos="{position}">{escape(hit.title)}</a></h2>
   {f'<p>{escape(hit.snippet)}</p>' if hit.snippet else ''}
   {provenance}
@@ -560,8 +572,12 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
     else:
         age = "just now" if cached_age < 10 else f"{_human_age(cached_age)} ago"
         timing = f'<span class="hit">cached {age}</span>'
-    unit = ("image" if total_unique == 1 else "images") if mode == "images" else (
-        "result" if total_unique == 1 else "results")
+    if mode == "images":
+        unit = "image" if total_unique == 1 else "images"
+    elif mode == "news":
+        unit = "article" if total_unique == 1 else "articles"
+    else:
+        unit = "result" if total_unique == 1 else "results"
     count_plain = f"{total_unique:,} {unit}"
     answer_hint = answered
 
@@ -581,14 +597,14 @@ def results_page(*, q: str, hits: list[MergedHit], page: int, per: int,
         body_hits = f'<div class="igrid">{tiles}</div>' if tiles else ""
     else:
         body_hits = "".join(_result(h, by_name, (page - 1) * per + i, reps.get(h.domain),
-                                    new_tab)
+                                    new_tab, mode=mode)
                             for i, h in enumerate(hits, start=1))
     if not body_hits:
-        if mode == "images" and not all_engines:
-            body_hits = ('<div class="none">No image-capable engines are configured. '
-                         '<a href="/settings/keys">Add a Brave or Serper key</a>.</div>')
+        if mode in ("images", "news") and not all_engines:
+            body_hits = (f'<div class="none">No {mode}-capable engines are configured. '
+                         f'<a href="/settings/keys">Add an API key</a>.</div>')
         else:
-            kind = "images" if mode == "images" else "results"
+            kind = {"images": "images", "news": "news articles"}.get(mode, "results")
             body_hits = (f'<div class="none">No {kind} for <b>{escape(q)}</b>. '
                          f'Try fewer words or a wider time range.</div>')
 
@@ -684,7 +700,7 @@ def _human_age(seconds: float) -> str:
 def _page_url(q, page, engines_on, time_range, ss, per, mode: str = "web") -> str:
     params: dict[str, object] = {
         "q": q,
-        "tab": "images" if mode == "images" else "",
+        "tab": mode if mode in ("images", "news") else "",
         "page": page,
         "engines": ",".join(sorted(engines_on)),
         "time": time_range,
@@ -761,7 +777,8 @@ def _issue_url(q: str, hits: list, *, page: int, per: int, results: list,
     """
     repo = repo or REPO
     base = f"https://github.com/{repo}/issues/new"
-    prefix = "Image search problem" if mode == "images" else "Search results problem"
+    prefix = {"images": "Image search problem",
+              "news": "News search problem"}.get(mode, "Search results problem")
     title = f"{prefix}: {q[:110]}"
     label = labels or {}
     engines = ", ".join(sorted(label.get(e, e) for e in engines_on)) or "none"
@@ -1143,6 +1160,8 @@ def about(engines: list[Spec], theme: str = "") -> str:
         bits = []
         if s.image_fn is not None:
             bits.append("images")
+        if s.news_fn is not None:
+            bits.append("news")
         if s.time_range:
             bits.append("time filter")
         if s.safesearch:

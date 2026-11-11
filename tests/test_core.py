@@ -383,3 +383,104 @@ def test_img_route_requires_auth_and_valid_hmac(env, monkeypatch):
     assert good.status_code == 200
     assert good.headers["content-type"] == "image/jpeg"
     assert "sandbox" in good.headers["content-security-policy"]
+
+
+# ------------------------------------------------------------------ news search
+def test_news_date_parsing_handles_all_engine_formats(env):
+    from datetime import datetime, timezone
+    providers = _fresh("providers")
+    ref = datetime(2026, 11, 11, 6, 0, 0, tzinfo=timezone.utc).timestamp()
+
+    # Exa ISO with Z
+    exa_h = providers.parse_age_hours("2026-11-10T18:00:00.000Z", now=ref)
+    assert exa_h == pytest.approx(12.0)
+    assert providers.fmt_news_age("2026-11-10T18:00:00.000Z", now=ref) == "12h ago"
+
+    # Brave naive ISO page_age
+    brave_h = providers.parse_age_hours("2026-11-10T12:00:00", now=ref)
+    assert brave_h == pytest.approx(18.0)
+
+    # Tavily RFC-2822
+    tav_h = providers.parse_age_hours("Tue, 10 Nov 2026 06:00:00 GMT", now=ref)
+    assert tav_h == pytest.approx(24.0)
+
+    # Serper / Firecrawl relative strings
+    assert providers.parse_age_hours("17 hours ago", now=ref) == pytest.approx(17.0)
+    assert providers.fmt_news_age("45 minutes ago", now=ref) == "45m ago"
+    assert providers.fmt_news_age("5 days ago", now=ref) == "5d ago"
+    assert providers.fmt_news_age("2026-08-16T23:02:32.000Z", now=ref) == "16 Aug 2026"
+
+    # Future clock skew is clamped to 0 rather than going negative.
+    assert providers.parse_age_hours("2026-11-11T08:00:00Z", now=ref) == 0.0
+
+
+def test_news_ranker_prefers_fresh_stories_and_consensus(env):
+    merge_mod = _fresh("merge")
+    app_mod = _fresh("app")
+
+    stale_exa = merge_mod.MergedHit(
+        title="Kernel 7.2 Released", url="https://9to5linux.com/lk72",
+        engines=["exa"], score=1 / 61, best_rank=1,
+        published="2026-08-16T23:02:32.000Z",
+    )
+    fresh_serper = merge_mod.MergedHit(
+        title="Breaking Kernel Fix", url="https://phoronix.com/news/fix",
+        engines=["serper"], score=1 / 61, best_rank=1,
+        published="6 hours ago", source_name="Phoronix",
+    )
+    consensus_recent = merge_mod.MergedHit(
+        title="Major Maintainer Update", url="https://lwn.net/Articles/1",
+        engines=["brave", "serper"], score=2 / 62, best_rank=2,
+        published="2 days ago", source_name="LWN.net",
+    )
+    ranked = app_mod._order_news([stale_exa, fresh_serper, consensus_recent])
+    urls = [r.hit.url for r in ranked]
+    assert urls[0] == "https://lwn.net/Articles/1"
+    assert urls[1] == "https://phoronix.com/news/fix"
+    assert urls[2] == "https://9to5linux.com/lk72"
+
+
+def test_strip_leading_title_cleans_duplicated_headlines(env):
+    providers = _fresh("providers")
+    title = "Longtime Linux Developer Steps Down From Some Roles"
+    raw = "Longtime Linux Developer Steps Down From Some Roles Written by Michael Larabel"
+    assert providers._strip_leading_title(raw, title) == "Written by Michael Larabel"
+
+
+def test_news_results_page_is_text_only_with_outlet_and_tabs(env):
+    providers = _fresh("providers")
+    merge_mod = _fresh("merge")
+    render = _fresh("render")
+    hit = merge_mod.MergedHit(
+        title="Longtime Linux Developer Steps Down",
+        url="https://www.phoronix.com/news/example",
+        snippet="Written by Michael Larabel in Linux Kernel.",
+        engines=["brave", "serper"], score=0.032, best_rank=1,
+        published="5 hours ago", source_name="Phoronix",
+    )
+    specs = [s for s in providers.SPECS if s.news_fn is not None]
+    html = render.results_page(
+        q="linux kernel", hits=[hit], page=1, per=10, total_unique=1, elapsed=0.88,
+        results=[_R("brave"), _R("serper")], engines_on={"brave", "serper"},
+        all_engines=specs, time_range="any", ss="moderate", mode="news",
+    )
+    assert "<img " not in html                   # text-only: no thumbnails rendered
+    assert '<span class="outlet">Phoronix</span>' in html
+    assert "phoronix.com" in html
+    assert "5h ago" in html
+    assert "1 article" in html
+    assert 'name="tab" value="news"' in html
+    assert 'aria-current="page" href="/search?q=linux+kernel&amp;tab=news">News</a>' in html
+
+
+def test_news_cache_ttl_expires_before_web_ttl(env):
+    import sqlite3
+    import time
+    cache = _fresh("cache")
+    k = cache.make_key("linux", ["brave"], "any", "moderate", 10, "auto", "news")
+    cache.put(k, "linux", {"v": 4, "merged": [], "engines": []})
+    with sqlite3.connect(cache.CACHE_PATH) as conn:
+        conn.execute("UPDATE queries SET created_at = ? WHERE key = ?",
+                     (time.time() - 420, k))  # 7 minutes old
+    assert cache.get(k, ttl=cache.NEWS_TTL_SECONDS) is None   # > 5m news TTL
+    assert cache.get(k) is not None                           # < 15m web TTL

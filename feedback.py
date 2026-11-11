@@ -25,7 +25,7 @@ import sqlite3
 import time
 from typing import Any, Iterable
 
-DB_PATH = os.path.expanduser("~/.cache/trivet/cache.db")
+DB_PATH = os.path.expanduser(os.environ.get("TRIVET_DB", "~/.cache/trivet/cache.db"))
 
 # Prior CTR and pseudo-count for smoothing: a domain with 1 impression should not
 # swing between 0% and 100%. 0.35/~8 matches the click-through rate of a decent

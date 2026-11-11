@@ -84,6 +84,7 @@ class MergedHit:
     thumb_url: str = ""
     width: int = 0
     height: int = 0
+    source_name: str = ""
 
     @property
     def agreement(self) -> int:
@@ -128,7 +129,7 @@ def merge(results: list[EngineResult], k: int = 60,
                 entry = MergedHit(title=hit.title, url=hit.url, snippet=hit.snippet,
                                   published=hit.published, image_url=hit.image_url,
                                   thumb_url=hit.thumb_url, width=hit.width,
-                                  height=hit.height)
+                                  height=hit.height, source_name=hit.source_name)
                 by_key[key] = entry
             else:
                 cur_id = entry.image_url or entry.url
@@ -147,8 +148,14 @@ def merge(results: list[EngineResult], k: int = 60,
             entry.best_rank = min(entry.best_rank, hit.rank)
             if not entry.snippet and hit.snippet:
                 entry.snippet = hit.snippet
+            elif hit.snippet and len(entry.snippet) < 65 and len(hit.snippet) > len(entry.snippet) + 30:
+                entry.snippet = hit.snippet
             if not entry.published and hit.published:
                 entry.published = hit.published
+            elif hit.published and entry.published and "ago" in str(entry.published).lower() and "ago" not in str(hit.published).lower():
+                entry.published = hit.published
+            if not entry.source_name and hit.source_name:
+                entry.source_name = hit.source_name
             if len(entry.title) < 12 and len(hit.title) > len(entry.title):
                 entry.title = hit.title
 

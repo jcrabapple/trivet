@@ -11,7 +11,7 @@ import sqlite3
 import time
 from typing import Any, Iterable
 
-DB_PATH = os.path.expanduser("~/.cache/trivet/cache.db")
+DB_PATH = os.path.expanduser(os.environ.get("TRIVET_DB", "~/.cache/trivet/cache.db"))
 RETENTION_DAYS = 45
 
 

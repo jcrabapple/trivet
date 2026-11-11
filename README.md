@@ -177,6 +177,10 @@ so an open instance is somebody else's free search engine.
 ## Features
 
 - **Server-rendered** — no build step, no framework in the browser, works with JS off.
+- **News search** — `/search?q=…&tab=news` fuses Exa, Brave, Tavily, Google (Serper) and
+  Firecrawl news indexes, normalises four vendor date formats into one recency curve
+  (36h half-life blended with RRF consensus), and expires cache rows in 5 minutes instead
+  of 15.
 - **Image search with proxied thumbnails** — `/search?q=…&tab=images` fuses Brave, Google
   (Serper) and Firecrawl image indexes, serving thumbnails through a signed same-origin
   proxy (`/img`) so `img-src 'self' data:` stays intact and client IPs are not leaked to

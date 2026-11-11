@@ -39,7 +39,7 @@ import secrets_store
 import thumb_proxy
 from merge import MergedHit, engine_consensus, merge
 from providers import (BY_NAME, DEFAULT_ENGINES, SPECS, EngineResult, QueryOpts,
-                       available, load_env, run_engine)
+                       available, load_env, parse_age_hours, run_engine)
 
 PER_CHOICES = (10, 20, 30)
 IMAGE_PER_DEFAULT = 24
@@ -255,7 +255,15 @@ def _prefs(request: Request, ss: str | None, per: int | None,
     return ss, per, time_range
 
 
-CACHE_VERSION = 3   # 3 = candidates carry image_url/thumb_url/width/height
+CACHE_VERSION = 4   # 4 = candidates carry source_name for news outlets
+
+
+def _pool_for(mode: str) -> list:
+    if mode == "images":
+        return [s for s in ENGINES if s.image_fn is not None]
+    if mode == "news":
+        return [s for s in ENGINES if s.news_fn is not None]
+    return ENGINES
 
 
 def _from_cache(payload: dict) -> tuple[list, list] | None:
@@ -291,13 +299,13 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
                          deep_policy, mode=mode)
 
     if use_cache:
-        hit = cache.get(key)
+        ttl = cache.NEWS_TTL_SECONDS if mode == "news" else None
+        hit = cache.get(key, ttl=ttl)
         cached = _from_cache(hit) if hit else None
         if cached:
             merged, engines = cached
             reps = await reputation.check_domains([h.url for h in merged])
-            ranked = (_order_images(merged, reps) if mode == "images"
-                      else _order(merged, query, ranker, reps))
+            ranked = _rank_for_mode(mode, merged, query, ranker, reps)
             return {"results": engines, "merged": merged, "ranked": ranked,
                     "reps": reps,
                     "window": [r.hit for r in ranked[(page - 1) * per: page * per]],
@@ -346,8 +354,7 @@ async def search(query: str, engine_names: list[str], page: int, per: int,
 
     stats.record(results)
     reps = await reputation.check_domains([h.url for h in merged])
-    ranked = (_order_images(merged, reps) if mode == "images"
-              else _order(merged, query, ranker, reps))
+    ranked = _rank_for_mode(mode, merged, query, ranker, reps)
     return {"results": results, "merged": merged, "ranked": ranked, "reps": reps,
             "window": [r.hit for r in ranked[(page - 1) * per: page * per]],
             "elapsed": elapsed, "fetch": fetch, "cached_age": None}
@@ -378,6 +385,32 @@ def _order_images(merged: list, reps: dict | None = None) -> list:
         scored.append((s, h))
     scored.sort(key=lambda pair: (-pair[0], pair[1].best_rank))
     return [ranking.Ranked(hit=h, score=s) for s, h in scored]
+
+
+def _order_news(merged: list, reps: dict | None = None) -> list:
+    """Blend RRF consensus with a 36h half-life recency curve for news queries."""
+    reps = reps or {}
+    now = time.time()
+    scored = []
+    for h in merged:
+        s = h.score
+        age = parse_age_hours(h.published, now=now)
+        s += 0.0015 if age is None else (0.018 / (1.0 + age / 36.0))
+        rep = reps.get(h.domain)
+        if rep is not None and getattr(rep, "flagged", False):
+            s -= _IMAGE_REP_PENALTY.get(rep.category, 0.002)
+        scored.append((s, h))
+    scored.sort(key=lambda pair: (-pair[0], pair[1].best_rank))
+    return [ranking.Ranked(hit=h, score=s) for s, h in scored]
+
+
+def _rank_for_mode(mode: str, merged: list, query: str, ranker: str,
+                   reps: dict | None) -> list:
+    if mode == "images":
+        return _order_images(merged, reps)
+    if mode == "news":
+        return _order_news(merged, reps)
+    return _order(merged, query, ranker, reps)
 
 
 # ------------------------------------------------------------------- routes
@@ -465,12 +498,12 @@ async def search_page(
     rank: str = Query("v1"),
 ) -> HTMLResponse:
     q = q.strip()
-    mode = "images" if tab == "images" else "web"
+    mode = tab if tab in ("images", "news") else "web"
     theme = _cookie(request, "theme")
     if q and not _rate_ok(_session(request) or _client_ip(request)):
         return HTMLResponse(render.rate_limited(theme), status_code=429,
                             headers={"Retry-After": "60"})
-    pool = [s for s in ENGINES if s.image_fn is not None] if mode == "images" else ENGINES
+    pool = _pool_for(mode)
     chosen = _pick_engines(request, engines, pool=pool)
     ss_cur, per_cur, time_range = _prefs(request, ss, per, time)
     if mode == "images":
@@ -702,6 +735,7 @@ async def healthz() -> dict[str, Any]:
     return {"ok": True, "version": __version__,
             "engines": [s.name for s in ENGINES],
             "image_engines": [s.name for s in ENGINES if s.image_fn is not None],
+            "news_engines": [s.name for s in ENGINES if s.news_fn is not None],
             "cache": cache.stats(),
             "datasets": {"smallweb": smallweb.size(), "bangs": bangs.size()}}
 
@@ -723,8 +757,8 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
     if bang:
         return JSONResponse({"query": q, "bang": bang, "results": [],
                              "took_ms": 0, "unique": 0, "raw": 0})
-    mode = "images" if tab == "images" else "web"
-    pool = [s for s in ENGINES if s.image_fn is not None] if mode == "images" else ENGINES
+    mode = tab if tab in ("images", "news") else "web"
+    pool = _pool_for(mode)
     chosen = _pick_engines(request, engines, pool=pool)
     per = limit or (IMAGE_PER_DEFAULT if mode == "images" else 10)
     ss_cur, _, time_range = _prefs(request, ss, None, time)
@@ -748,6 +782,11 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
                 "width": h.width,
                 "height": h.height,
             })
+        elif mode == "news":
+            item.update({
+                "domain": h.domain,
+                "source": h.source_name or h.domain,
+            })
         rows.append(item)
     return JSONResponse({
         "query": q,
@@ -761,7 +800,7 @@ async def api_search(request: Request, q: str = Query(..., min_length=1, max_len
                      "error": r.error, "cost_usd": r.cost_usd,
                      "skipped": r.skipped} for r in data["results"]],
         "results": rows,
-        "ranker": "rrf-images" if mode == "images" else rank,
+        "ranker": f"rrf-{mode}" if mode in ("images", "news") else rank,
         "ranked_all": [
             {"rank": i, "title": r.hit.title, "url": r.hit.url,
              "score": round(r.score, 5),

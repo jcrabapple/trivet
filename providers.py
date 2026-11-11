@@ -16,6 +16,7 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 
 import httpx
@@ -139,6 +140,7 @@ class Hit:
     thumb_url: str = ""
     width: int = 0
     height: int = 0
+    source_name: str = ""
 
 
 @dataclass
@@ -177,10 +179,99 @@ def _clean(text: Any, limit: int = 240) -> str:
 
 
 _ALLOWED_SCHEMES = ("http://", "https://")
+_REL_AGE_RE = re.compile(
+    r"^(\d+)\s*(second|sec|minute|min|hour|hr|day|week|wk|month|mo|year|yr)s?\s+ago$",
+    re.IGNORECASE,
+)
+_REL_UNIT_HOURS = {
+    "second": 1 / 3600, "sec": 1 / 3600,
+    "minute": 1 / 60, "min": 1 / 60,
+    "hour": 1.0, "hr": 1.0,
+    "day": 24.0,
+    "week": 168.0, "wk": 168.0,
+    "month": 730.0, "mo": 730.0,
+    "year": 8760.0, "yr": 8760.0,
+}
+
+
+def parse_age_hours(raw: str | None, now: float | None = None) -> float | None:
+    """Parse ISO, RFC-2822, calendar, or relative date strings into hours old."""
+    if not raw:
+        return None
+    text = " ".join(str(raw).strip().split())
+    if not text:
+        return None
+    low = text.lower()
+    if low == "just now":
+        return 0.05
+    if low == "yesterday":
+        return 24.0
+    m = _REL_AGE_RE.match(low)
+    if m:
+        return float(m.group(1)) * _REL_UNIT_HOURS[m.group(2)]
+
+    ref = now if now is not None else time.time()
+    dt: datetime | None = None
+    # ISO 8601 (with Z, offset, or naive UTC such as Brave's page_age)
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    # RFC 2822 (Tavily's "Tue, 10 Nov 2026 11:00:00 GMT")
+    if dt is None and "," in text:
+        try:
+            dt = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            pass
+    if dt is None:
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %b %Y", "%d %B %Y"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (ref - dt.timestamp()) / 3600.0)
+
+
+def fmt_news_age(raw: str | None, now: float | None = None) -> str:
+    """Uniform age label for news rows: relative inside 14 days, date beyond."""
+    if not raw:
+        return ""
+    hrs = parse_age_hours(raw, now=now)
+    if hrs is None:
+        return str(raw).strip()
+    if hrs < 1 / 60:
+        return "just now"
+    if hrs < 1.0:
+        return f"{max(1, round(hrs * 60))}m ago"
+    if hrs < 48.0:
+        return f"{max(1, round(hrs))}h ago"
+    if hrs < 14 * 24.0:
+        return f"{max(2, round(hrs / 24.0))}d ago"
+    ref = now if now is not None else time.time()
+    dt = datetime.fromtimestamp(ref - hrs * 3600.0, tz=timezone.utc)
+    return dt.strftime("%d %b %Y")
+
+
+def _strip_leading_title(snippet: str, title: str) -> str:
+    """Drop a repeated headline from the front of markdown-derived news snippets."""
+    if not snippet or not title:
+        return snippet
+    for head in (title, title.split(" - ")[0], title.split(" | ")[0]):
+        h = head.rstrip("….").strip()
+        if len(h) >= 12 and snippet.lower().startswith(h.lower()):
+            rest = snippet[len(h):].lstrip(" -–—·:|,.")
+            if rest:
+                return rest
+    return snippet
 
 
 def _hits(items, engine: str, *, url_key="url", title_key="title",
-          snippet_keys=("snippet", "description", "content", "text", "excerpt", "excerpts"),
+          snippet_keys=("highlights", "snippet", "description", "content", "text", "excerpt", "excerpts"),
           published_key=None) -> list[Hit]:
     out: list[Hit] = []
     for i, it in enumerate(items or [], start=1):
@@ -189,17 +280,18 @@ def _hits(items, engine: str, *, url_key="url", title_key="title",
         url = str(it.get(url_key) or it.get("link") or it.get("href") or "").strip()
         if not url.lower().startswith(_ALLOWED_SCHEMES):
             continue          # a javascript: or data: URL is never a search result
+        title = _clean(it.get(title_key) or it.get("name") or url, 200)
         snippet = ""
         for sk in snippet_keys:
             val = it.get(sk)
             if val:
                 if isinstance(val, list):
                     val = " ".join(str(x) for x in val)
-                snippet = _clean(val)
+                snippet = _clean(_strip_leading_title(_clean(val, 600), title), 240)
                 if snippet:
                     break
         out.append(Hit(
-            title=_clean(it.get(title_key) or it.get("name") or url, 200),
+            title=title,
             url=url,
             snippet=snippet,
             engine=engine,
@@ -448,6 +540,129 @@ async def firecrawl_images(client, query, limit, key, opts: QueryOpts):
     return out, None
 
 
+# ------------------------------------------------------------- news adapters
+async def exa_news(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {
+        "query": query, "category": "news", "numResults": limit, "type": "auto",
+        "contents": {"highlights": {"numSentences": 2, "highlightsPerUrl": 1}},
+    }
+    since = _since_iso(opts.time_range)
+    if since:
+        body["startPublishedDate"] = since
+    r = await client.post("https://api.exa.ai/search",
+                          headers={"x-api-key": key}, json=body)
+    r.raise_for_status()
+    return _hits(r.json().get("results"), "exa", published_key="publishedDate"), None
+
+
+async def brave_news(client, query, limit, key, opts: QueryOpts):
+    params: dict[str, Any] = {"q": query, "count": min(limit, 20)}
+    freshness = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}.get(opts.time_range)
+    if freshness:
+        params["freshness"] = freshness
+    if opts.safesearch in ("off", "moderate", "strict"):
+        params["safesearch"] = opts.safesearch
+    r = await client.get("https://api.search.brave.com/res/v1/news/search",
+                         headers={"X-Subscription-Token": key, "Accept": "application/json"},
+                         params=params)
+    r.raise_for_status()
+    out: list[Hit] = []
+    for it in r.json().get("results") or []:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        if not url.lower().startswith(_ALLOWED_SCHEMES):
+            continue
+        prof = it.get("profile") or {}
+        outlet = _clean(prof.get("name"), 80) if isinstance(prof, dict) else ""
+        title = _clean(it.get("title") or url, 200)
+        snippet = _strip_leading_title(_clean(it.get("description")), title)
+        out.append(Hit(
+            title=title,
+            url=url,
+            snippet=snippet,
+            engine="brave",
+            rank=len(out) + 1,
+            published=it.get("page_age") or it.get("age"),
+            source_name=outlet,
+        ))
+    return out, None
+
+
+async def tavily_news(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {
+        "query": query, "topic": "news", "max_results": limit, "search_depth": "basic",
+    }
+    days = {"day": 1, "week": 7, "month": 31, "year": 366}.get(opts.time_range)
+    if days:
+        body["days"] = days
+    r = await client.post("https://api.tavily.com/search",
+                          headers={"Authorization": f"Bearer {key}"}, json=body)
+    r.raise_for_status()
+    return _hits(r.json().get("results"), "tavily", published_key="published_date"), None
+
+
+async def serper_news(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {"q": query, "num": limit}
+    tbs = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}.get(opts.time_range)
+    if tbs:
+        body["tbs"] = tbs
+    if opts.safesearch == "strict":
+        body["safe"] = "active"
+    r = await client.post("https://google.serper.dev/news",
+                          headers={"X-API-KEY": key}, json=body)
+    r.raise_for_status()
+    out: list[Hit] = []
+    for it in r.json().get("news") or []:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("link") or it.get("url") or "").strip()
+        if not url.lower().startswith(_ALLOWED_SCHEMES):
+            continue
+        title = _clean(it.get("title") or url, 200)
+        out.append(Hit(
+            title=title,
+            url=url,
+            snippet=_strip_leading_title(_clean(it.get("snippet")), title),
+            engine="serper",
+            rank=len(out) + 1,
+            published=it.get("date"),
+            source_name=_clean(it.get("source"), 80),
+        ))
+    return out, None
+
+
+async def firecrawl_news(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {"query": query, "sources": ["news"], "limit": min(limit, 50)}
+    tbs = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}.get(opts.time_range)
+    if tbs:
+        body["tbs"] = tbs
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    r = await client.post("https://api.firecrawl.dev/v2/search",
+                          headers=headers, json=body)
+    r.raise_for_status()
+    data = r.json().get("data") or {}
+    items = data.get("news") if isinstance(data, dict) else []
+    out: list[Hit] = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        if not url.lower().startswith(_ALLOWED_SCHEMES):
+            continue
+        title = _clean(it.get("title") or url, 200)
+        raw_snip = it.get("snippet") or it.get("description") or ""
+        out.append(Hit(
+            title=title,
+            url=url,
+            snippet=_strip_leading_title(_clean(raw_snip), title),
+            engine="firecrawl",
+            rank=len(out) + 1,
+            published=it.get("date"),
+        ))
+    return out, None
+
+
 @dataclass(frozen=True)
 class Spec:
     name: str
@@ -461,32 +676,33 @@ class Spec:
     min_interval: float = 0.0    # seconds between calls; some plans cap at 1 rps
     key_optional: bool = False   # endpoint answers without a key (unmetered today)
     image_fn: Callable | None = None
+    news_fn: Callable | None = None
 
 
 SPECS: tuple[Spec, ...] = (
     Spec("keenable", "Keenable", ("KEENABLE_API_KEY",), keenable, "fast",
          "agent-first index"),
     Spec("exa", "Exa", ("EXA_API_KEY",), exa, "fast",
-         "neural index with page text", time_range=True),
+         "neural index with page text", time_range=True, news_fn=exa_news),
     # Brave's free AI plan allows 1 request/second; without spacing, a page flip
     # or a retyped query returns HTTP 429 and silently drops the engine.
     Spec("brave", "Brave", ("BRAVE_API_KEY",), brave, "fast",
          "independent crawl, own ranking", time_range=True, safesearch=True,
-         min_interval=1.1, image_fn=brave_images),
+         min_interval=1.1, image_fn=brave_images, news_fn=brave_news),
     Spec("valyu", "Valyu", ("VALYU_API_KEY",), valyu, "deep",
          "full page content, reports cost"),
     Spec("tavily", "Tavily", ("TAVILY_API_KEY",), tavily, "fast",
-         "search tuned for RAG", time_range=True),
+         "search tuned for RAG", time_range=True, news_fn=tavily_news),
     Spec("linkup", "Linkup", ("LINKUP_API_KEY",), linkup, "fast",
          "EU-hosted", time_range=True),
     Spec("serper", "Google (Serper)", ("SERPER_API_KEY",), serper, "fast",
          "Google SERP reseller", time_range=True, safesearch=True,
-         image_fn=serper_images),
+         image_fn=serper_images, news_fn=serper_news),
     # /v2/search answers without a key as of 2026-11-09 (measured ~0.9-1.4s, 5/5 queries);
     # a key raises the quota if they start metering it again
     Spec("firecrawl", "Firecrawl", ("FIRECRAWL_API_KEY",), firecrawl, "fast",
          "crawl-and-extract index", time_range=True, key_optional=True,
-         image_fn=firecrawl_images),
+         image_fn=firecrawl_images, news_fn=firecrawl_news),
     Spec("parallel", "Parallel", ("PARALLEL_API_KEY",), parallel, "deep",
          "objective-driven search"),
 )
@@ -535,7 +751,12 @@ async def _respect_interval(name: str, min_interval: float) -> None:
 async def run_engine(client: httpx.AsyncClient, spec: Spec, query: str, limit: int,
                      env: dict[str, str], timeout: float,
                      opts: QueryOpts, mode: str = "web") -> EngineResult:
-    fn = spec.image_fn if mode == "images" else spec.fn
+    if mode == "images":
+        fn = spec.image_fn
+    elif mode == "news":
+        fn = spec.news_fn
+    else:
+        fn = spec.fn
     if fn is None:
         return EngineResult(spec.name, ok=True, skipped=True, ms=0)
     key = key_for(spec, env)

@@ -17,9 +17,10 @@ import sqlite3
 import time
 from typing import Any
 
-CACHE_DIR = os.path.expanduser("~/.cache/trivet")
-CACHE_PATH = os.path.join(CACHE_DIR, "cache.db")
-TTL_SECONDS = int(os.environ.get("TRIVET_CACHE_TTL", "900"))   # 15 min
+CACHE_PATH = os.path.expanduser(os.environ.get("TRIVET_DB", "~/.cache/trivet/cache.db"))
+CACHE_DIR = os.path.dirname(CACHE_PATH)
+TTL_SECONDS = int(os.environ.get("TRIVET_CACHE_TTL", "900"))        # 15 min
+NEWS_TTL_SECONDS = int(os.environ.get("TRIVET_NEWS_CACHE_TTL", "300"))  # 5 min
 MAX_ROWS = 1000
 
 
@@ -63,8 +64,9 @@ def make_key(query: str, engines: list[str], time_range: str, safesearch: str,
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def get(key: str) -> dict[str, Any] | None:
+def get(key: str, ttl: int | None = None) -> dict[str, Any] | None:
     """Return the cached payload plus its age, or None on miss/expiry."""
+    max_age = TTL_SECONDS if ttl is None else ttl
     try:
         with _connect() as conn:
             row = conn.execute(
@@ -75,7 +77,7 @@ def get(key: str) -> dict[str, Any] | None:
         return None
     payload, created = row[0], row[1]
     age = time.time() - created
-    if age > TTL_SECONDS:
+    if age > max_age:
         return None
     try:
         data = json.loads(payload)
