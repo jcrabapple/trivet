@@ -458,8 +458,14 @@ def _domain_prior(host: str, url: str, query: str = "", terms: list[str] | None 
         segs = [s for s in path.strip("/").split("/") if s]
         distinctive = {t for t in terms
                        if len(t) >= 2 and t not in GENERIC_HOST_WORDS and not t.isdigit()}
-        repo_match = bool(segs) and any(s.lower() in distinctive for s in segs[:2])
-        return (0.62 if (repo_match and agreement >= 2) else 0.42), 0.0, 0.85
+        # An exact canonical repository name is primary evidence even when only
+        # one engine returned it. Owner-only matches still need consensus, which
+        # keeps a single-engine fork from jumping ahead of the actual project.
+        repo_name_match = len(segs) == 2 and segs[1] in distinctive
+        if repo_name_match:
+            return 1.0, 0.0, 0.85
+        owner_or_repo_match = bool(segs) and any(s.lower() in distinctive for s in segs[:2])
+        return (0.62 if (owner_or_repo_match and agreement >= 2) else 0.42), 0.0, 0.85
 
     primary = _host_is(host, PRIMARY_REFERENCE) and host != "pypi.python.org"
     vendor_match = False
@@ -474,6 +480,8 @@ def _domain_prior(host: str, url: str, query: str = "", terms: list[str] | None 
     is_ugc = is_sub_ugc or is_path_ugc
     subj_match, is_doc_surface = _subject_host_match(host, path, terms)
     is_doc_subdomain = host.startswith(DOC_SUBDOMAINS) or host.endswith(".readthedocs.io")
+    single_entity = (len(terms) == 1 and len(terms[0]) >= 4
+                     and terms[0] not in GENERIC_HOST_WORDS and not terms[0].isdigit())
 
     if primary:
         if is_ugc or is_edu_personal:
@@ -512,7 +520,9 @@ def _domain_prior(host: str, url: str, query: str = "", terms: list[str] | None 
             prior += 0.72
             trust = 0.95
         elif subj_match and not is_ugc:
-            prior += 0.45
+            # A distinctive project's own homepage is a primary source for an
+            # exact entity lookup, not merely another keyword-matching domain.
+            prior += 0.72 if single_entity else 0.45
             trust = 0.85
         elif is_doc_subdomain and not is_ugc:
             prior += 0.40
@@ -550,6 +560,12 @@ def _domain_prior(host: str, url: str, query: str = "", terms: list[str] | None 
 
     if choice and _host_is(host, GENERAL_REFERENCE):
         prior -= 0.90
+
+    # Consensus plus a reference-domain prior must not turn an alternate spelling
+    # into the top answer for an exact entity lookup. Keep this deliberately narrow:
+    # one distinctive word, and no trace of that spelling in the encyclopedia slug.
+    if single_entity and _host_is(host, GENERAL_REFERENCE) and _coverage(terms, path) == 0.0:
+        prior = min(prior, 0.10)
 
     if _host_is(host, DISCOUNTED_SUFFIXES):
         prior -= 0.25

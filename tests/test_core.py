@@ -575,6 +575,50 @@ def test_vendor_blogs_are_topic_gated_and_short_tokens_require_word_boundaries(e
     assert seo_vpn == 0.0
 
 
+def test_exact_entity_projects_outrank_alternate_spelling_reference_pages(env):
+    merge_mod = _fresh("merge")
+    ranking = _fresh("ranking")
+    terms = ranking.query_terms("kyllene")
+
+    exact_repo, _, _ = ranking._domain_prior(
+        "github.com", "https://github.com/savy-91/kyllene", terms=terms, agreement=1)
+    owner_only, _, _ = ranking._domain_prior(
+        "github.com", "https://github.com/kyllene/herald", terms=terms, agreement=1)
+    owner_consensus, _, _ = ranking._domain_prior(
+        "github.com", "https://github.com/kyllene/herald", terms=terms, agreement=2)
+    official, _, _ = ranking._domain_prior(
+        "kyllene.app", "https://kyllene.app", terms=terms)
+    spelling_match, _, _ = ranking._domain_prior(
+        "en.wikipedia.org", "https://en.wikipedia.org/wiki/Kyllene", terms=terms)
+    spelling_mismatch, _, _ = ranking._domain_prior(
+        "en.wikipedia.org", "https://en.wikipedia.org/wiki/Cyllene_(nymph)", terms=terms)
+    assert exact_repo == 1.0
+    assert owner_only == 0.42
+    assert owner_consensus == 0.62
+    assert official == 0.72
+    assert spelling_match == 0.80
+    assert spelling_mismatch == 0.10
+
+    def hit(title, url, score, rank, engines):
+        return merge_mod.MergedHit(
+            title=title, url=url, snippet="Kyllene is an unofficial Android client for Hermes Agent.",
+            engines=engines, score=score, best_rank=rank,
+            sources=[{"e": name, "r": rank} for name in engines])
+
+    wiki = hit("Cyllene (nymph)", "https://en.wikipedia.org/wiki/Cyllene_(nymph)",
+               0.06377, 1, ["keenable", "exa", "brave"])
+    official_hit = hit("Kyllene: the Hermes Agent app for Android", "https://kyllene.app",
+                       0.03227, 1, ["exa"])
+    repo = hit("GitHub - savy-91/kyllene: Unofficial Android client for Hermes Agent.",
+               "https://github.com/savy-91/kyllene", 0.01587, 3, ["serper"])
+    redirected_repo = hit("GitHub - Giton22/kyllene: Unofficial Android client for Hermes Agent.",
+                          "https://github.com/Giton22/kyllene", 0.01613, 2, ["serper"])
+    ordered = ranking.rank([wiki, official_hit, repo, redirected_repo], "kyllene")
+    assert ordered[0].hit.url == "https://kyllene.app"
+    assert {r.hit.url for r in ordered[1:3]} == {repo.url, redirected_repo.url}
+    assert ordered[3].hit.url == wiki.url
+
+
 # ------------------------------------------------------------------ autosuggest
 def test_serper_suggestions_are_clean_deduplicated_limited_and_cached(env):
     import asyncio
