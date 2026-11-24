@@ -29,7 +29,8 @@ import ranking  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 SNAPSHOT = ROOT / "combo-snapshot.json"
-ENGINES = ("keenable", "exa", "brave", "tavily", "serper", "linkup", "firecrawl")
+ENGINES = ("keenable", "exa", "brave", "tavily", "serper", "linkup", "firecrawl",
+           "parallel", "perplexity")
 K = 10
 FETCH_LIMIT = 20
 

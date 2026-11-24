@@ -151,7 +151,7 @@ html[data-theme="dark"] .pill{color:hsl(var(--h) 78% 74%);
 .meta .refresh{color:var(--muted);text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--muted) 55%,transparent);
   text-underline-offset:2px;font-size:12px}
-/* desktop wraps when all 9 web engines are configured so mouse users can reach
+/* desktop wraps when all 10 web engines are configured so mouse users can reach
    every chip; phones switch to a single swipeable strip below 640px */
 .filters{position:relative;display:flex;gap:6px 14px;align-items:center;
   flex-wrap:wrap;margin:8px 0 14px;padding-bottom:11px;
@@ -526,7 +526,7 @@ addEventListener('keydown',e=>{{
 ENGINE_HUES = {
     "keenable": 212, "exa": 268, "brave": 24, "tavily": 158,
     "serper": 44, "linkup": 190, "firecrawl": 12, "valyu": 296,
-    "parallel": 232,
+    "parallel": 232, "perplexity": 176,
 }
 
 
@@ -1371,14 +1371,17 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
                   f' onclick="return confirm(\'Remove this key? The engine stops working '
                   f'until a new one is saved.\')"{disabled}>Remove</button>'
                   if info else "")
-        return f"""<form class="krow" method="post" action="/settings/keys">
+        return f"""<form class="krow" method="post" action="/settings/keys" autocomplete="off">
       <input type="hidden" name="csrf" value="{escape(csrf)}">
       <input type="hidden" name="key" value="{escape(key_name)}">
       <div class="kname"><b>{escape(spec.label)}</b>
         <span class="ksub">{escape(spec.tier)} · {escape(key_name)}</span></div>
       <div class="kstate-cell">{state}</div>
-      <input class="kinput" type="password" name="value" placeholder="paste key"
-             autocomplete="off" spellcheck="false" required{disabled}>
+      <input class="kinput" type="text" name="value" placeholder="paste key"
+             aria-label="API key for {escape(spec.label)}"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+             data-1p-ignore data-bwignore data-lpignore="true"
+             data-protonpass-ignore="true" data-form-type="other" required{disabled}>
       <div class="kacts"><button name="action" value="save"{disabled}>Save</button>{remove}</div>
     </form>"""
 
@@ -1416,7 +1419,8 @@ def keys_page(engines: list[Spec], status: dict[str, dict], can_store: bool,
 .kstate.ok{color:var(--fg)}
 .kstate.off{color:var(--muted)}
 .kinput{width:100%;min-width:0;border:1px solid var(--line);border-radius:7px;
-  background:var(--field);color:var(--fg);padding:7px 9px;font:inherit;font-size:13px}
+  background:var(--field);color:var(--fg);padding:7px 9px;font:inherit;font-size:13px;
+  -webkit-text-security:disc}
 .kacts{display:flex;gap:6px}
 .krow button{border:1px solid var(--line);background:var(--chip);color:var(--fg);
   border-radius:7px;padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer}

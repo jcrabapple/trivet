@@ -26,7 +26,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("TRIVET_PASS", "hunter2")
     for name in ("KEENABLE_API_KEY", "EXA_API_KEY", "BRAVE_API_KEY", "TAVILY_API_KEY",
                  "SERPER_API_KEY", "LINKUP_API_KEY", "FIRECRAWL_API_KEY", "VALYU_API_KEY",
-                 "PARALLEL_API_KEY"):
+                 "PARALLEL_API_KEY", "PERPLEXITY_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     return monkeypatch
 
@@ -937,3 +937,355 @@ def test_api_answer_runs_only_for_enabled_web_page_one_question(env, monkeypatch
     removed = client.get("/api/search?q=Capital%3F", headers=headers)
     assert removed.json()["quick_answer"] is None
     assert len(calls) == 1
+
+
+# ------------------------------------------------------- parallel & perplexity
+def test_parallel_search_v1_payload_and_response(env):
+    import asyncio
+    import json
+    import httpx
+    providers = _fresh("providers")
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["key"] = request.headers["x-api-key"]
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "results": [
+                {
+                    "title": "Parallel Docs",
+                    "url": "https://docs.parallel.ai/search",
+                    "publish_date": "2026-10-15",
+                    "excerpts": ["Fast web search API.", "Returns ranked excerpts."],
+                },
+                {
+                    "title": "Unsafe",
+                    "url": "javascript:alert(1)",
+                    "excerpts": ["ignored"],
+                },
+            ]
+        })
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await providers.run_engine(
+                client, providers.BY_NAME["parallel"], "parallel search", 30,
+                {"PARALLEL_API_KEY": "par-test-key"}, 5.0,
+                providers.QueryOpts(time_range="month"),
+            )
+
+    res = asyncio.run(exercise())
+    assert res.ok
+    assert captured["url"] == "https://api.parallel.ai/v1/search"
+    assert captured["key"] == "par-test-key"
+    assert captured["body"]["mode"] == "fast"
+    assert captured["body"]["objective"] == "parallel search"
+    assert captured["body"]["search_queries"] == ["parallel search"]
+    assert captured["body"]["advanced_settings"]["max_results"] == 20
+    after = captured["body"]["advanced_settings"]["source_policy"]["after_date"]
+    assert len(after) == 10 and after[4] == "-" and after[7] == "-"
+    assert len(res.hits) == 1
+    assert res.hits[0].title == "Parallel Docs"
+    assert res.hits[0].published == "2026-10-15"
+    assert "Fast web search API." in res.hits[0].snippet
+
+
+def test_perplexity_search_payload_and_response(env):
+    import asyncio
+    import json
+    import httpx
+    providers = _fresh("providers")
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers["Authorization"]
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "results": [
+                {
+                    "title": "Python 3.15 Release",
+                    "url": "https://www.python.org/downloads/release/python-3150/",
+                    "snippet": "Python 3.15 brings new profiling tools.",
+                    "date": "2026-10-05",
+                    "last_updated": "2026-10-06",
+                },
+                {
+                    "title": "Bad Scheme",
+                    "url": "data:text/html,hi",
+                    "snippet": "ignored",
+                },
+            ]
+        })
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await providers.run_engine(
+                client, providers.BY_NAME["perplexity"], "python 3.15", 30,
+                {"PERPLEXITY_API_KEY": "pplx-test-key"}, 5.0,
+                providers.QueryOpts(time_range="week"),
+            )
+
+    res = asyncio.run(exercise())
+    assert res.ok
+    assert captured["url"] == "https://api.perplexity.ai/search"
+    assert captured["auth"] == "Bearer pplx-test-key"
+    assert captured["body"] == {
+        "query": "python 3.15",
+        "max_results": 20,
+        "search_type": "web",
+        "search_recency_filter": "week",
+    }
+    assert len(res.hits) == 1
+    assert res.hits[0].title == "Python 3.15 Release"
+    assert res.hits[0].published == "2026-10-05"
+    assert "profiling tools" in res.hits[0].snippet
+
+
+def test_parallel_and_perplexity_specs_and_ui_registration(env):
+    providers = _fresh("providers")
+    answers = _fresh("answers")
+    render = _fresh("render")
+
+    par = providers.BY_NAME["parallel"]
+    pplx = providers.BY_NAME["perplexity"]
+    assert par.tier == "fast" and par.time_range is True
+    assert pplx.tier == "fast" and pplx.time_range is True
+    assert "parallel" in render.ENGINE_HUES
+    assert "perplexity" in render.ENGINE_HUES
+
+    avail = providers.available({"PARALLEL_API_KEY": "p", "PERPLEXITY_API_KEY": "x"})
+    assert {s.name for s in avail} >= {"parallel", "perplexity"}
+    ans_avail = [s.name for s in answers.available(avail)]
+    assert "perplexity" in ans_avail and "parallel" in ans_avail
+
+    keys_html = render.keys_page(providers.SPECS, {}, True, "csrf-token")
+    assert "PARALLEL_API_KEY" in keys_html
+    assert "PERPLEXITY_API_KEY" in keys_html
+    assert 'type="password"' not in keys_html
+    assert 'data-1p-ignore' in keys_html and 'data-bwignore' in keys_html
+    assert '-webkit-text-security:disc' in keys_html
+
+
+def test_perplexity_quick_answer_extracts_text_and_indexed_citations(env):
+    import asyncio
+    import json
+    import httpx
+    answers = _fresh("answers")
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers["Authorization"]
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "output": [
+                {
+                    "type": "search_results",
+                    "results": [
+                        {"id": 1, "title": "Rust Blog", "url": "https://blog.rust-lang.org/release"},
+                        {"id": 2, "title": "Bad", "url": "javascript:alert(1)"},
+                        {"id": 3, "title": "Rust Docs", "url": "https://doc.rust-lang.org/stable/"},
+                    ],
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "Rust released a new version [1][3]."},
+                    ],
+                },
+            ]
+        })
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await answers.get(client, "perplexity", "Latest Rust release?",
+                                     {"PERPLEXITY_API_KEY": "pplx-k"})
+
+    res = asyncio.run(exercise())
+    assert res.ok
+    assert captured["url"] == "https://api.perplexity.ai/v1/agent"
+    assert captured["auth"] == "Bearer pplx-k"
+    assert captured["body"]["effort"] == "fast"
+    assert captured["body"]["input"] == "Latest Rust release"
+    assert res.text == "Rust released a new version [1][3]."
+    assert len(res.citations) == 3
+    assert res.citations[0].url == "https://blog.rust-lang.org/release"
+    assert res.citations[1].url == ""             # placeholder keeps [3] aligned
+    assert res.citations[2].url == "https://doc.rust-lang.org/stable/"
+
+
+def test_parallel_quick_answer_extracts_output_text_and_annotations(env):
+    import asyncio
+    import json
+    import httpx
+    answers = _fresh("answers")
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers["Authorization"]
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "output_text": "Paris is the capital of France.",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Paris is the capital of France.",
+                            "annotations": [
+                                {"type": "url_citation", "title": "Britannica",
+                                 "url": "https://britannica.com/place/Paris"},
+                                {"type": "url_citation", "title": "Britannica dup",
+                                 "url": "https://britannica.com/place/Paris"},
+                                {"type": "url_citation", "title": "Unsafe",
+                                 "url": "javascript:alert(1)"},
+                                {"type": "url_citation", "text": "Wikipedia",
+                                 "url": "https://wikipedia.org/wiki/Paris"},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        })
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await answers.get(client, "parallel", "Capital of France?",
+                                     {"PARALLEL_API_KEY": "par-k"})
+
+    res = asyncio.run(exercise())
+    assert res.ok
+    assert captured["url"] == "https://api.parallel.ai/v1/responses"
+    assert captured["auth"] == "Bearer par-k"
+    assert captured["body"]["model"] == "parallel"
+    assert captured["body"]["reasoning"] == {"effort": "low"}
+    assert res.text == "Paris is the capital of France."
+    assert [c.url for c in res.citations if c.url] == [
+        "https://britannica.com/place/Paris",
+        "https://wikipedia.org/wiki/Paris",
+    ]
+    assert [c.title for c in res.citations if c.url] == ["Britannica", "Wikipedia"]
+
+
+def test_canonical_url_strips_search_highlight_and_wrapper_params(env):
+    merge_mod = _fresh("merge")
+    base = "https://docs.python.org/3/library/asyncio-task.html"
+    assert merge_mod.canonical_url(base + "?highlight=create_task") == base
+    assert merge_mod.canonical_url("https://postgresql.org/docs/current/sql-vacuum.html?trk=abc") == (
+        "https://postgresql.org/docs/current/sql-vacuum.html")
+    assert merge_mod.canonical_url("https://kernel.org/?wpappninja_v=x&wpmobileexternal=true") == (
+        "https://kernel.org/")
+    assert merge_mod.canonical_url("https://healthline.com/a?utm=") == "https://healthline.com/a"
+    assert merge_mod.canonical_url("https://superuser.com/q/1?noredirect=1") == "https://superuser.com/q/1"
+    assert merge_mod.canonical_url("https://itsfoss.com/p?__mp_fmt=md") == "https://itsfoss.com/p"
+    assert merge_mod.canonical_url("https://example.com/p?__cf_chl_rt_tk=abc") == "https://example.com/p"
+    assert merge_mod.canonical_url("https://example.com/p?%3A~%3Atext=hello") == "https://example.com/p"
+    # Meaningful query parameters must survive untouched.
+    assert merge_mod.canonical_url("https://youtube.com/watch?v=abc123") == "https://youtube.com/watch?v=abc123"
+
+
+def test_clean_strips_markdown_tables_but_keeps_title_pipes(env):
+    providers = _fresh("providers")
+    assert providers._clean("FastAPI | Docs") == "FastAPI | Docs"
+    cleaned = providers._clean("Release |State|current| |--|--| |Name|F44| |Version|44|")
+    assert "--" not in cleaned
+    assert "|" not in cleaned
+    assert "State current Name F44 Version 44" in cleaned
+
+
+def test_ranking_engine_weights_scale_rrf_and_preserve_consensus(env):
+    merge_mod = _fresh("merge")
+    ranking = _fresh("ranking")
+    brave_one = merge_mod.MergedHit(
+        title="Python Guide", url="https://a.example/guide",
+        snippet="Complete Python guide for writing clean code.",
+        engines=["brave"], score=1 / 61, best_rank=1,
+        sources=[{"e": "brave", "r": 1}],
+    )
+    keenable_one = merge_mod.MergedHit(
+        title="Python Guide", url="https://b.example/guide",
+        snippet="Complete Python guide for writing clean code.",
+        engines=["keenable"], score=1 / 61, best_rank=1,
+        sources=[{"e": "keenable", "r": 1}],
+    )
+    two_engine = merge_mod.MergedHit(
+        title="Python Guide", url="https://c.example/guide",
+        snippet="Complete Python guide for writing clean code.",
+        engines=["keenable", "perplexity"], score=2 / 61, best_rank=1,
+        sources=[{"e": "keenable", "r": 1}, {"e": "perplexity", "r": 1}],
+    )
+    ordered = ranking.rank([keenable_one, brave_one, two_engine], "python guide")
+    assert [r.hit.url for r in ordered] == [two_engine.url, brave_one.url, keenable_one.url]
+
+
+def test_tech_staleness_applies_to_choice_not_evergreen_troubleshooting(env):
+    merge_mod = _fresh("merge")
+    ranking = _fresh("ranking")
+    old_qa = merge_mod.MergedHit(
+        title="Add Windows BitLocker boot entry to GRUB",
+        url="https://superuser.com/questions/1829683/grub-bitlocker",
+        snippet="Detailed steps to configure a GRUB boot menu entry for Windows encrypted with BitLocker.",
+        engines=["brave", "serper"], score=2 / 61, best_rank=1,
+        published="2023-01-10",
+        sources=[{"e": "brave", "r": 1}, {"e": "serper", "r": 1}],
+    )
+    ranked_troubleshoot = ranking.rank([old_qa], "grub boots into windows bitlocker")
+    assert ranked_troubleshoot[0].features.penalties == 0.0
+
+    old_review = merge_mod.MergedHit(
+        title="Best Android Browsers Tested",
+        url="https://example.org/best-android-browsers",
+        snippet="We tested the top Android browsers for speed and privacy.",
+        engines=["brave"], score=1 / 61, best_rank=1,
+        published="2023-01-10",
+        sources=[{"e": "brave", "r": 1}],
+    )
+    ranked_choice = ranking.rank([old_review], "best android browser")
+    assert ranked_choice[0].features.penalties >= ranking.DEFAULT_CONFIG["penalties"]["tech_stale_3y"]
+
+
+def test_community_threads_exempt_from_seo_listicle_and_silent_e_stemming(env):
+    merge_mod = _fresh("merge")
+    ranking = _fresh("ranking")
+
+    reddit = merge_mod.MergedHit(
+        title="Best VPN for Android?",
+        url="https://reddit.com/r/androidapps/comments/1/best_vpn_for_android",
+        snippet="Looking for recommendations on the best VPN for Android.",
+        engines=["brave"], score=1 / 61, best_rank=1,
+        sources=[{"e": "brave", "r": 1}],
+    )
+    farm = merge_mod.MergedHit(
+        title="Top 10 Best VPN for Android 2026 Reviewed",
+        url="https://randomvpnblog.example/blog/best-vpn-for-android-2026",
+        snippet="We may earn affiliate commission on our expert tested picks.",
+        engines=["brave"], score=1 / 61, best_rank=1,
+        sources=[{"e": "brave", "r": 1}],
+    )
+    ranked = {r.hit.url: r for r in ranking.rank([reddit, farm], "best vpn for android")}
+    assert ranked[reddit.url].features.seo == 0.0
+    assert ranked[farm.url].features.seo > 0.3
+
+    # Silent-e stemming matches 'grading' <-> 'grade' and 'taking' <-> 'take', while
+    # short tokens remain strict.
+    assert ranking._coverage(["grading"], "How To Grade Vinyl Records") == 1.0
+    assert ranking._coverage(["taking"], "Best Note Take Apps") == 1.0
+    assert ranking._coverage(["ai"], "He said the main domain") == 0.0
+
+
+def test_path_warez_heuristic_does_not_poison_host_cache(env):
+    import asyncio
+    rep = _fresh("reputation")
+    svc = rep.ReputationService()
+
+    first = asyncio.run(svc.check_many(["https://sharedhost.example/crack-download/tool"]))
+    assert first["sharedhost.example"].category == "suspicious"
+    assert svc._cached("sharedhost.example") is None
+
+    second = asyncio.run(svc.check_many(["https://sharedhost.example/docs/getting-started"]))
+    assert second["sharedhost.example"].category != "suspicious"

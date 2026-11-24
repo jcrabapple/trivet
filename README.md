@@ -9,8 +9,8 @@ A search engine for humans, backed by agentic search APIs.
 
 SearXNG's shape, not SearXNG's engines. Instead of scraping seventy HTML front ends, each
 query fans out to a few independent commercial indexes — Keenable, Exa, Brave, Tavily,
-Google via Serper, Linkup, Firecrawl, Valyu — and the results are fused into one ranked
-list you can actually read.
+Google via Serper, Linkup, Firecrawl, Parallel, Perplexity, Valyu — and the results are fused
+into one ranked list you can actually read.
 
 It is deliberately not a tool for AI agents: no function-calling schema, no raw JSON blob
 for a model to chew on. It is a page with a search box, server-rendered, that works with
@@ -123,24 +123,30 @@ explicit export always wins.
 | Linkup | `LINKUP_API_KEY` | fast | EU-hosted index |
 | Firecrawl | `FIRECRAWL_API_KEY` | fast | crawl-and-extract index |
 | Valyu | `VALYU_API_KEY` | deep | agentic retrieval, full page text, 5–6s cold |
-| Parallel | `PARALLEL_API_KEY` | deep | objective-driven search |
+| Parallel | `PARALLEL_API_KEY` | fast | objective-driven search |
+| Perplexity | `PERPLEXITY_API_KEY` | fast | real-time web index |
 
 Adding an engine is one adapter plus one `Spec` in `providers.py`, which declares the env
 var that holds its key, its tier, and which query options it honours.
 
 ### Which set to run
 
-Measured on 26 labelled queries with `eval/combo_bench.py`:
+Measured on 26 labelled queries (2026-11-23) with weighted RRF:
 
-| Set | nDCG@10 | recall@20 | wall time |
-|---|---|---|---|
-| Exa + Brave + Serper | 0.735 | 92.3% | 1.3s |
-| **Keenable + Exa + Brave + Serper** | 0.709 | **96.2%** | 1.3s |
-| all seven fast engines | 0.732 | 96.2% | 2.1s |
+| Set | nDCG@10 | Holdout | MRR | mean wall time | p95 wall time |
+|---|---|---|---|---|---|
+| **Keenable + Brave + Serper + Parallel + Perplexity** | **0.788** | 0.774 | **0.756** | 1.2s | 2.9s |
+| Keenable + Brave + Serper + Parallel | 0.773 | 0.702 | 0.731 | 1.2s | 2.9s |
+| Brave + Serper + Parallel | 0.768 | 0.772 | 0.745 | 1.2s | 2.9s |
+| Brave + Parallel | 0.760 | **0.787** | 0.732 | **0.7s** | **0.9s** |
+| Keenable + Exa + Brave + Serper *(previous default)* | 0.731 | 0.600 | 0.684 | 1.3s | 3.0s |
 
-The default is the four-engine set: highest recall inside a ~1.3s budget. Ranking quality
-alone prefers three engines, but that loses the answer on one query in twenty-six. More is
-not automatically better — weak engines add noise to the consensus signal and buy no recall.
+The default is **Keenable + Brave + Serper + Parallel + Perplexity**: with per-engine RRF weights
+in `ranking.py` (`brave=1.05`, `serper/parallel/exa=1.00`, `keenable/perplexity=0.75`), Keenable
+and Perplexity contribute fast recall and recency (~220–260ms) without diluting consensus from
+Brave, Serper, and Parallel — lifting nDCG@10 to 0.788 at the same ~1.2s wall time. For a
+sub-second budget (~0.7s mean, <0.9s p95), **Brave + Parallel** drops Serper's occasional 2–3s
+tail while keeping 0.760 nDCG.
 
 Deep engines are opt-in twice: tick them in Preferences, and by default they only run when a
 fast engine failed or the merged set could not fill a page.
@@ -184,10 +190,10 @@ so an open instance is somebody else's free search engine.
   key and defaults on when one exists; ordinary search still works with JavaScript disabled.
 - **Quick answers** — end a Web query with `?` to generate one cited answer above the results.
   Preferences has an opt-in **Quick answer** toggle and an answer-engine selector limited to
-  configured, supported providers: Exa, Tavily, Keenable, Linkup, or Valyu. The selected provider
-  runs concurrently with normal Web search, so its failure never removes the result list. Answers
-  use a bounded 128-entry, 15-minute memory cache; `nocache=1` bypasses it. Inline citations and
-  source links are sanitized rather than rendered as vendor HTML.
+  configured, supported providers: Exa, Perplexity, Tavily, Keenable, Linkup, Parallel, or Valyu.
+  The selected provider runs concurrently with normal Web search, so its failure never removes
+  the result list. Answers use a bounded 128-entry, 15-minute memory cache; `nocache=1` bypasses
+  it. Inline citations and source links are sanitized rather than rendered as vendor HTML.
 - **News search** — `/search?q=…&tab=news` fuses Exa, Brave, Tavily, Google (Serper) and
   Firecrawl news indexes, normalises four vendor date formats into one recency curve
   (36h half-life blended with RRF consensus), and expires cache rows in 5 minutes instead

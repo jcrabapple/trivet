@@ -22,12 +22,14 @@ MAX_ANSWER_CHARS = 8000
 TIMEOUT_SECONDS = 35.0
 # Ordered by the measured simple-question latency, with Exa first for its compact
 # inline citations. Only configured members appear in Preferences.
-PROVIDER_ORDER = ("exa", "tavily", "keenable", "linkup", "valyu")
+PROVIDER_ORDER = ("exa", "perplexity", "tavily", "keenable", "linkup", "parallel", "valyu")
 ENV_KEYS = {
     "exa": "EXA_API_KEY",
+    "perplexity": "PERPLEXITY_API_KEY",
     "tavily": "TAVILY_API_KEY",
     "keenable": "KEENABLE_API_KEY",
     "linkup": "LINKUP_API_KEY",
+    "parallel": "PARALLEL_API_KEY",
     "valyu": "VALYU_API_KEY",
 }
 
@@ -90,24 +92,104 @@ def _text(value: Any) -> str:
     return value[:MAX_ANSWER_CHARS].rsplit(" ", 1)[0].rstrip() + "…"
 
 
+def _citation_from(row: Any) -> Citation | None:
+    if isinstance(row, str):
+        row = {"url": row, "title": row}
+    if not isinstance(row, dict):
+        return None
+    raw_url = row.get("url") or row.get("link") or ""
+    title = row.get("title") or row.get("name") or row.get("text") or raw_url
+    # Keep the provider's positions: inline [n] markers refer to this list.
+    # Invalid entries become placeholders and are omitted from the visible
+    # source list rather than shifting every later citation onto a new page.
+    url = raw_url if isinstance(raw_url, str) and raw_url.startswith(
+        ("http://", "https://")) else ""
+    return Citation(" ".join(str(title).split())[:240], url[:2048])
+
+
 def _citations(rows: Any) -> list[Citation]:
     out: list[Citation] = []
     if not isinstance(rows, list):
         return out
     for row in rows:
-        if not isinstance(row, dict):
+        cit = _citation_from(row)
+        if cit is None:
             continue
-        raw_url = row.get("url") or row.get("link") or ""
-        title = row.get("title") or row.get("name") or raw_url
-        # Keep the provider's positions: inline [n] markers refer to this list.
-        # Invalid entries become placeholders and are omitted from the visible
-        # source list rather than shifting every later citation onto a new page.
-        url = raw_url if isinstance(raw_url, str) and raw_url.startswith(
-            ("http://", "https://")) else ""
-        out.append(Citation(" ".join(str(title).split())[:240], url[:2048]))
+        out.append(cit)
         if len(out) >= MAX_SOURCES:
             break
     return out
+
+
+def _indexed_citations(rows: list[Any]) -> list[Citation]:
+    """Align citations by 1-based integer `id` when present so inline [n] stays exact."""
+    indexed = [r for r in rows if isinstance(r, dict)
+               and isinstance(r.get("id"), int) and not isinstance(r.get("id"), bool)
+               and 1 <= r["id"] <= MAX_SOURCES]
+    if not indexed:
+        return _citations(rows)
+    slots: list[Citation] = [Citation("", "") for _ in range(max(r["id"] for r in indexed))]
+    for row in indexed:
+        cit = _citation_from(row)
+        if cit is not None:
+            slots[row["id"] - 1] = cit
+    return slots
+
+
+def _responses_parts(data: dict[str, Any]) -> tuple[str, list[Citation], str]:
+    """Extract text, citations, and error from an OpenAI Responses-style payload."""
+    err = data.get("error")
+    if err:
+        msg = (err.get("message") or err.get("code") or "answer failed"
+               if isinstance(err, dict) else str(err))
+        return "", [], str(msg)[:80]
+
+    output = data.get("output") if isinstance(data.get("output"), list) else []
+    text = data.get("output_text") if isinstance(data.get("output_text"), str) else ""
+    if not text.strip():
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+        text = "\n\n".join(parts)
+
+    search_rows: list[Any] = []
+    for item in output:
+        if isinstance(item, dict) and item.get("type") == "search_results":
+            rows = item.get("results")
+            if isinstance(rows, list):
+                search_rows.extend(rows)
+
+    if search_rows:
+        citations = _indexed_citations(search_rows)
+    elif isinstance(data.get("citations"), list):
+        citations = _indexed_citations(data["citations"])
+    elif isinstance(data.get("search_results"), list):
+        citations = _indexed_citations(data["search_results"])
+    else:
+        ann_rows: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                for ann in block.get("annotations") or []:
+                    if not isinstance(ann, dict):
+                        continue
+                    if ann.get("type") not in (None, "url_citation"):
+                        continue
+                    url = ann.get("url") or ""
+                    if isinstance(url, str) and url and url not in seen_urls:
+                        seen_urls.add(url)
+                        ann_rows.append(ann)
+        citations = _citations(ann_rows)
+
+    return _text(text), citations, ""
 
 
 async def _exa(client: httpx.AsyncClient, query: str, key: str) -> AnswerResult:
@@ -199,11 +281,40 @@ async def _valyu(client: httpx.AsyncClient, query: str, key: str) -> AnswerResul
     return AnswerResult("valyu", _text("".join(chunks)), sources, error=stream_error)
 
 
+async def _perplexity(client: httpx.AsyncClient, query: str, key: str) -> AnswerResult:
+    r = await client.post("https://api.perplexity.ai/v1/agent",
+                          headers={"Authorization": f"Bearer {key}"}, json={
+        "effort": "fast",
+        "input": query,
+        "instructions": ("Answer directly and concisely in at most three short paragraphs. "
+                         "Use inline citation markers for factual claims."),
+    }, timeout=TIMEOUT_SECONDS)
+    r.raise_for_status()
+    text, citations, err = _responses_parts(r.json())
+    return AnswerResult("perplexity", text, citations, error=err)
+
+
+async def _parallel(client: httpx.AsyncClient, query: str, key: str) -> AnswerResult:
+    r = await client.post("https://api.parallel.ai/v1/responses",
+                          headers={"Authorization": f"Bearer {key}"}, json={
+        "model": "parallel",
+        "input": query,
+        "instructions": ("Answer directly and concisely in at most three short paragraphs. "
+                         "Cite sources inline."),
+        "reasoning": {"effort": "low"},
+    }, timeout=TIMEOUT_SECONDS)
+    r.raise_for_status()
+    text, citations, err = _responses_parts(r.json())
+    return AnswerResult("parallel", text, citations, error=err)
+
+
 ADAPTERS: dict[str, Callable] = {
     "exa": _exa,
+    "perplexity": _perplexity,
     "tavily": _tavily,
     "keenable": _keenable,
     "linkup": _linkup,
+    "parallel": _parallel,
     "valyu": _valyu,
 }
 

@@ -160,22 +160,29 @@ class ReputationService:
             return Reputation(host, "suspicious", "local suspicious list", "list")
         return None
 
-    def _heuristic(self, host: str, url: str = "") -> Reputation | None:
+    def _host_heuristic(self, host: str) -> Reputation | None:
         if SPAM_HOST_RE.search(host):
             return Reputation(host, "spam", "SEO-shaped hostname", "heuristic")
         # Warez and link-selling hosts: no DNS list covers these because they are not
         # ad servers. Match only unambiguous tokens on the host (there is no legitimate
-        # "keygen.com"), plus a milder path-scoped rule, because a bare "crack" would
-        # flag cracked.com.
+        # "keygen.com").
         if re.search(r"(keygen|warez|nulled|serialz)", host):
             return Reputation(host, "suspicious", "warez-shaped hostname", "heuristic")
-        path = urlsplit(url).path.lower() if url else ""
-        if re.search(r"(crack|keygen|activator)", host + path) and re.search(
-                r"(download|free|crack|keygen|activator)", path):
-            return Reputation(host, "suspicious", "warez page pattern", "heuristic")
         if re.search(r"(backlink|linkfarm|link-building)", host):
             return Reputation(host, "suspicious", "link-selling hostname", "heuristic")
         return None
+
+    def _path_heuristic(self, host: str, url: str = "") -> Reputation | None:
+        # Path-scoped warez match: never cached in domain_rep, so a single bad URL
+        # on a shared host (e.g. github.com, reddit.com) cannot poison the host.
+        path = urlsplit(url).path.lower() if url else ""
+        if path and re.search(r"(crack|keygen|activator)", host + path) and re.search(
+                r"(download|free|crack|keygen|activator)", path):
+            return Reputation(host, "suspicious", "warez page pattern", "heuristic")
+        return None
+
+    def _heuristic(self, host: str, url: str = "") -> Reputation | None:
+        return self._host_heuristic(host) or self._path_heuristic(host, url)
 
     async def _agh_lookup(self, client: httpx.AsyncClient, password: str,
                           host: str) -> Reputation | None:
@@ -229,10 +236,14 @@ class ReputationService:
             if cached:
                 out[host] = cached
                 continue
-            heuristic = self._heuristic(host, sample.get(host, ""))
+            heuristic = self._host_heuristic(host)
             if heuristic:
                 out[host] = heuristic
                 self._store([heuristic])
+                continue
+            path_heuristic = self._path_heuristic(host, sample.get(host, ""))
+            if path_heuristic:
+                out[host] = path_heuristic
                 continue
             pending.append(host)
 

@@ -70,7 +70,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "fresh_half_life_days": 240,
     "diversify_max_per_domain": 2,
-    "engine_weights": {},          # per-engine trust multiplier on the RRF term
+    # Per-engine trust multiplier applied when computing weighted RRF from
+    # hit.sources (so weight updates apply immediately even to cached queries).
+    # Bounded to a modest range so 2-engine consensus always beats a single #1.
+    "engine_weights": {
+        "brave": 1.05,
+        "serper": 1.00,
+        "parallel": 1.00,
+        "exa": 1.00,
+        "keenable": 0.75,
+        "perplexity": 0.75,
+    },
 }
 
 STOPWORDS = {
@@ -323,18 +333,29 @@ def _years_in(query: str) -> list[int]:
     return [int(y) for y in YEAR_RE.findall(query)]
 
 
+def _silent_e_stem(word: str) -> str | None:
+    """Strip common inflectional endings so silent-e pairs ('grade'/'grading', 'take'/'taking') match."""
+    for suffix in ("ing", "ed", "er", "e"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)]
+    return None
+
+
 def _term_hits(term: str, words: list[str], word_set: set[str]) -> bool:
     """Word-boundary match with symmetric plural/stem tolerance for >=4-char words.
 
     Short 2-3 char tokens ('ai', 'uv', 'go', 'os') require exact whole-word match so
     'ai' never matches 'said' or 'domain'. Longer words match small inflectional
-    suffixes in both directions ('kidneys' <-> 'kidney', 'addition' <-> 'additions').
+    suffixes in both directions ('kidneys' <-> 'kidney', 'grading' <-> 'grade').
     """
     if term in word_set:
         return True
     if len(term) >= 4:
+        t_stem = _silent_e_stem(term)
         for w in words:
             if (w.startswith(term) or (len(w) >= 4 and term.startswith(w))) and abs(len(w) - len(term)) <= 3:
+                return True
+            if t_stem and len(w) >= 4 and _silent_e_stem(w) == t_stem:
                 return True
     return False
 
@@ -583,14 +604,31 @@ def friction_score(age_days: float, half_life: float) -> float:
 
 
 # --------------------------------------------------------------------- scoring
+def _weighted_rrf(hit: Any, engine_weights: dict[str, float], k: int = 60) -> float:
+    """Apply per-engine weights from hit.sources while preserving hit.score's scale."""
+    base = float(getattr(hit, "score", 0.0) or 0.0)
+    sources = getattr(hit, "sources", None) or []
+    if not engine_weights or not sources:
+        return base
+    raw = sum(1.0 / (k + int(s.get("r", 99))) for s in sources)
+    weighted = sum(
+        float(engine_weights.get(s.get("e", ""), 1.0)) / (k + int(s.get("r", 99)))
+        for s in sources
+    )
+    return base * (weighted / raw) if base > 0 and raw > 0 else weighted
+
+
 def score_hit(hit: Any, query: str, terms: list[str], intent: str,
               max_rrf: float, cfg: dict[str, Any], rep: Any = None,
-              *, multi_engine_pool: bool = True) -> Ranked:
+              *, multi_engine_pool: bool = True,
+              pool_engines: int = 4,
+              hit_rrf: float | None = None) -> Ranked:
     w = cfg["weights"]
     pen = cfg["penalties"]
     choice = is_choice_query(query, terms)
     f = Features(intent=intent)
-    hit_score = float(getattr(hit, "score", 0.0) or 0.0)
+    hit_score = (float(hit_rrf) if hit_rrf is not None
+                 else _weighted_rrf(hit, cfg.get("engine_weights") or {}))
     f.rrf = hit_score / max_rrf if max_rrf > 0 else 0.0
     sources = getattr(hit, "sources", []) or []
     best_rank = min((s.get("r", 99) for s in sources), default=99)
@@ -598,19 +636,26 @@ def score_hit(hit: Any, query: str, terms: list[str], intent: str,
     if multi_engine_pool and len(sources) <= 1:
         raw_rank *= 0.65
     f.rank = raw_rank
-    f.agree = min(1.0, (len(sources) - 1) / 3.0) if sources else 0.0
+    agree_denom = max(2.0, float(pool_engines - 1)) if pool_engines >= 2 else 3.0
+    f.agree = min(1.0, (len(sources) - 1) / agree_denom) if sources else 0.0
 
     f.title = min(1.0, _title_match(terms, hit.title, hit.url) + _phrase_bonus(query, hit.title))
     f.snippet = _coverage(terms, hit.snippet or "")
 
+    host = host_of(hit.url)
     prior, _shape_penalty, trust = _domain_prior(
-        host_of(hit.url), hit.url, query=query, terms=terms,
+        host, hit.url, query=query, terms=terms,
         intent=intent, choice=choice, agreement=len(sources))
     f.domain = prior
 
-    seo = quality.seo_penalty(hit.title, hit.url, hit.snippet or "", trust)
-    f.seo = seo.penalty
-    f.penalties += pen.get("seo_listicle", 0.0) * seo.penalty
+    # Community forums and Q&A threads ("Best VPN for Android?") are not SEO
+    # affiliate listicles and should not be penalized by the listicle classifier.
+    if _host_is(host, SOCIAL_HOSTS) or _host_is(host, QA_HOSTS):
+        f.seo = 0.0
+    else:
+        seo = quality.seo_penalty(hit.title, hit.url, hit.snippet or "", trust)
+        f.seo = seo.penalty
+        f.penalties += pen.get("seo_listicle", 0.0) * seo.penalty
     if rep is not None and getattr(rep, "category", "none") in pen:
         f.penalties += pen[rep.category]
         f.reputation = rep.category
@@ -630,7 +675,9 @@ def score_hit(hit: Any, query: str, terms: list[str], intent: str,
         f.fresh = friction_score(days, half_life)
         if years_in_query and (current_year - days // 365) < max(years_in_query) - 1 and not claimed_current:
             f.penalties += pen["stale_for_year"]
-        if intent.startswith("tech") and not claimed_current:
+        # Staleness applies to recency and product-choice queries ("best browser"),
+        # not evergreen docs or troubleshooting Q&A ("asyncio create_task", "grub bitlocker").
+        if (intent == "tech_recency" or (intent == "tech" and choice)) and not claimed_current:
             if days > 1080:
                 f.penalties += pen["tech_stale_3y"]
             elif days > 540:
@@ -706,11 +753,18 @@ def rank(hits: list[Any], query: str, *, config: dict[str, Any] | None = None,
     terms = query_terms(query)
     intent = detect_intent(query)
     reputation = reputation or {}
-    max_rrf = max((float(getattr(h, "score", 0.0) or 0.0) for h in hits), default=0.0)
+    engine_weights = cfg.get("engine_weights") or {}
+    rrfs = [_weighted_rrf(h, engine_weights) for h in hits]
+    max_rrf = max(rrfs, default=0.0)
+    pool_names = {s.get("e") for h in hits
+                  for s in (getattr(h, "sources", []) or []) if s.get("e")}
+    pool_engines = len(pool_names) if pool_names else 4
     multi_pool = any(len(getattr(h, "sources", []) or []) >= 2 for h in hits)
     scored = [score_hit(h, query, terms, intent, max_rrf, cfg,
                         rep=reputation.get(h.domain),
-                        multi_engine_pool=multi_pool) for h in hits]
+                        multi_engine_pool=multi_pool,
+                        pool_engines=pool_engines,
+                        hit_rrf=rrf) for h, rrf in zip(hits, rrfs)]
     scored.sort(key=lambda r: -r.score)
     if diversify_results:
         scored = diversify(scored, int(cfg["diversify_max_per_domain"]))

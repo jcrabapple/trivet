@@ -12,11 +12,14 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from providers import EngineResult, Hit
 
-TRACKING_PREFIXES = ("utm_", "mc_", "hs_", "pk_", "oly_", "vero_")
+TRACKING_PREFIXES = ("utm_", "mc_", "hs_", "pk_", "oly_", "vero_",
+                     "__cf_chl_", "__mp_", "wpappninja", "wpmobile")
 TRACKING_EXACT = {
     "fbclid", "gclid", "dclid", "msclkid", "yclid", "igshid", "twclid", "srsltid",
     "ref", "ref_src", "referrer", "source", "src", "s", "si", "spm", "vl",
     "share", "share_id", "cmpid", "campaign", "__twitter_impression",
+    "utm", "trk", "highlight", "noredirect", "no_redirect",
+    "test_uuid", "test_variant",
 }
 DEFAULT_PORTS = {"http": "80", "https": "443"}
 
@@ -43,7 +46,7 @@ def canonical_url(url: str) -> str:
     kept = []
     for k, v in parse_qsl(parts.query, keep_blank_values=True):
         kl = k.lower()
-        if kl in TRACKING_EXACT or kl.startswith(TRACKING_PREFIXES):
+        if not kl or kl.startswith(":~:text") or kl in TRACKING_EXACT or kl.startswith(TRACKING_PREFIXES):
             continue
         kept.append((k, v))
     return urlunsplit(("https", host, path, urlencode(sorted(kept)), ""))

@@ -127,6 +127,11 @@ def _since_iso(time_range: str) -> str | None:
     return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _since_date(time_range: str) -> str | None:
+    since = _since_iso(time_range)
+    return since[:10] if since else None
+
+
 @dataclass
 class Hit:
     title: str
@@ -171,6 +176,9 @@ def _clean(text: Any, limit: int = 240) -> str:
         s = re.sub(r"<[^>]{1,200}>", " ", s)
         s = html_module.unescape(s)
     s = re.sub(r"[#*`>]+", "", s)                         # markdown punctuation
+    s = re.sub(r"(?:\|[\s:]*-{2,}[\s:]*)+\|?", " ", s)    # markdown table dividers
+    if s.count("|") >= 3:                                  # markdown table cell pipes
+        s = s.replace("|", " ")
     s = re.sub(r"(?<![a-zA-Z0-9])_+|_+(?![a-zA-Z0-9])", "", s)  # keep snake_case intact
     s = " ".join(s.split()).lstrip("-–—•·|,;: ")          # list/bullet residue
     if len(s) <= limit:
@@ -419,15 +427,41 @@ async def linkup(client, query, limit, key, opts: QueryOpts):
 
 
 async def parallel(client, query, limit, key, opts: QueryOpts):
+    adv: dict[str, Any] = {"max_results": min(limit, 20)}
+    after = _since_date(opts.time_range)
+    if after:
+        adv["source_policy"] = {"after_date": after}
     r = await client.post(
-        "https://api.parallel.ai/v1beta/search",
+        "https://api.parallel.ai/v1/search",
         headers={"x-api-key": key},
-        json={"objective": query, "search_queries": [query],
-              "processor": "base", "max_results": limit},
+        json={
+            "objective": query,
+            "search_queries": [query],
+            "mode": "fast",
+            "advanced_settings": adv,
+        },
     )
     r.raise_for_status()
     body = r.json()
-    return _hits(body.get("results") or body.get("data"), "parallel"), None
+    return _hits(body.get("results") or body.get("data"), "parallel",
+                 published_key="publish_date"), None
+
+
+async def perplexity(client, query, limit, key, opts: QueryOpts):
+    body: dict[str, Any] = {
+        "query": query,
+        "max_results": min(limit, 20),
+        "search_type": "web",
+    }
+    if opts.time_range in ("day", "week", "month", "year"):
+        body["search_recency_filter"] = opts.time_range
+    r = await client.post(
+        "https://api.perplexity.ai/search",
+        headers={"Authorization": f"Bearer {key}"},
+        json=body,
+    )
+    r.raise_for_status()
+    return _hits(r.json().get("results"), "perplexity", published_key="date"), None
 
 
 async def serper(client, query, limit, key, opts: QueryOpts):
@@ -712,18 +746,23 @@ SPECS: tuple[Spec, ...] = (
     Spec("firecrawl", "Firecrawl", ("FIRECRAWL_API_KEY",), firecrawl, "fast",
          "crawl-and-extract index", time_range=True, key_optional=True,
          image_fn=firecrawl_images, news_fn=firecrawl_news),
-    Spec("parallel", "Parallel", ("PARALLEL_API_KEY",), parallel, "deep",
-         "objective-driven search"),
+    Spec("parallel", "Parallel", ("PARALLEL_API_KEY",), parallel, "fast",
+         "objective-driven search", time_range=True),
+    Spec("perplexity", "Perplexity", ("PERPLEXITY_API_KEY",), perplexity, "fast",
+         "real-time web index", time_range=True),
 )
 
 BY_NAME = {s.name: s for s in SPECS}
-# Measured with eval/combo_bench.py on 26 labelled queries (2026-11-09). The set that
-# maximises recall inside ~1.3s: adding Tavily/Linkup grows the candidate pool without
-# surfacing an expected page that these four missed, and both cost latency.
-RECOMMENDED = ("keenable", "exa", "brave", "serper")
-RECOMMENDED_NOTE = ("96% of expected answers in the top 20, in about 1.3s (26 labelled queries).")
-RECOMMENDED_CAVEAT = ("Tavily and Linkup add candidates without adding recall, and cost latency. "
-                      "Firecrawl returned HTTP 429 on 60% of back-to-back calls.")
+# Measured on 26 labelled queries (2026-11-23) with weighted RRF in ranking.py.
+# Down-weighting Keenable and Perplexity (0.75) lets both contribute recall and
+# consensus without diluting Brave/Serper/Parallel precision — lifting the 5-engine
+# set to 0.788 nDCG@10 (0.774 holdout) and 0.756 MRR in ~1.2s mean wall time.
+RECOMMENDED = ("keenable", "brave", "serper", "parallel", "perplexity")
+RECOMMENDED_NOTE = ("0.788 nDCG@10 and 0.756 MRR in ~1.2s mean wall time (26 labelled queries); "
+                    "Brave + Parallel alone hits 0.760 nDCG in ~0.7s.")
+RECOMMENDED_CAVEAT = ("Weighted RRF lets Perplexity (~260ms) and Keenable (~220ms) add recall "
+                      "without drowning out Brave, Serper, and Parallel. Tavily and Linkup add "
+                      "latency without recall; Firecrawl rate-limits on back-to-back calls.")
 DEFAULT_ENGINES = RECOMMENDED
 
 
